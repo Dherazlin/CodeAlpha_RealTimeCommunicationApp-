@@ -17,7 +17,12 @@ export default function MeetingCard({ meeting, isRecent = false }) {
   };
 
   const handleJoin = () => {
-    navigate(`/meeting/${meeting.id}`);
+    navigate(`/meeting/${meeting.id}`, {
+      state: {
+        title: meeting.title,
+        category: meeting.category,
+      },
+    });
   };
 
   return (

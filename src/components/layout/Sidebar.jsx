@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Video,
   LayoutDashboard,
@@ -10,24 +10,24 @@ import {
   HelpCircle,
   LogOut,
   X,
-  Sparkles,
 } from 'lucide-react';
 import Avatar from '../common/Avatar';
-import { currentUser } from '../../data/mockData';
+import { useAuth } from '../../context/AuthContext';
 
 export default function Sidebar({ isOpen, onClose, activeTab, onTabChange }) {
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
-    { id: 'meetings', label: 'Meetings', icon: Calendar, path: '/dashboard' },
-    { id: 'recent', label: 'Recent', icon: Clock, path: '/dashboard' },
-    { id: 'files', label: 'Files & Notes', icon: FolderOpen, path: '/dashboard' },
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'meetings', label: 'Meetings', icon: Calendar },
+    { id: 'recent', label: 'Recent', icon: Clock },
+    { id: 'files', label: 'Files & Notes', icon: FolderOpen },
   ];
 
   const bottomNavItems = [
-    { id: 'settings', label: 'Settings', icon: Settings, path: '/dashboard' },
-    { id: 'help', label: 'Help & Docs', icon: HelpCircle, path: '/dashboard' },
+    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'help', label: 'Help & Docs', icon: HelpCircle },
   ];
 
   const handleNavClick = (itemId) => {
@@ -40,8 +40,14 @@ export default function Sidebar({ isOpen, onClose, activeTab, onTabChange }) {
   };
 
   const handleLogout = () => {
+    logout();
     navigate('/login');
   };
+
+  // Safe fallback for user values
+  const userName = user?.name || 'User';
+  const userRole = user?.role || 'Member';
+  const userAvatar = user?.avatar || '';
 
   return (
     <>
@@ -71,7 +77,7 @@ export default function Sidebar({ isOpen, onClose, activeTab, onTabChange }) {
               <div>
                 <span className="font-bold text-slate-900 tracking-tight text-base">Korus</span>
                 <span className="text-[10px] uppercase font-semibold text-brand-600 bg-brand-50 px-1.5 py-0.5 rounded ml-1.5">
-                  Phase 1
+                  Live
                 </span>
               </div>
             </div>
@@ -90,20 +96,19 @@ export default function Sidebar({ isOpen, onClose, activeTab, onTabChange }) {
           {/* User Profile Presence Pill (WhatsApp-style compact profile) */}
           <div className="p-3.5 mx-3 my-3 bg-slate-50/80 border border-slate-200/70 rounded-2xl flex items-center gap-3">
             <Avatar
-              src={currentUser.avatar}
-              name={currentUser.name}
-              initials={currentUser.initials}
+              src={userAvatar}
+              name={userName}
               size="md"
-              status={currentUser.status}
+              status="online"
             />
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-slate-900 truncate">
-                  {currentUser.name}
+                  {userName}
                 </p>
                 <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white" title="Online" />
               </div>
-              <p className="text-[11px] text-slate-500 truncate">{currentUser.role}</p>
+              <p className="text-[11px] text-slate-500 truncate">{userRole}</p>
             </div>
           </div>
 

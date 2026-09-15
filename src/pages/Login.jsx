@@ -1,20 +1,45 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Video, Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Video, Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
 import Input from '../components/common/Input';
 import Button from '../components/common/Button';
+import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('alex.morgan@company.com');
-  const [password, setPassword] = useState('demo1234');
+  const location = useLocation();
+  const { login } = useAuth();
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleLogin = (e) => {
+  // Redirect destination after successful login
+  const from = location.state?.from?.pathname || '/dashboard';
+
+  const handleLogin = async (e) => {
     e.preventDefault();
-    // Phase 1: Local navigation to dashboard (real auth hooked up in later phase)
-    navigate('/dashboard');
+    setError('');
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setError('Please fill in all required fields.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await login(trimmedEmail, password);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Login failed. Please verify your credentials.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -36,6 +61,17 @@ export default function Login() {
           </p>
         </div>
 
+        {/* Error Banner */}
+        {error && (
+          <div
+            className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-150"
+            role="alert"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">{error}</span>
+          </div>
+        )}
+
         {/* Login Form */}
         <form onSubmit={handleLogin} className="space-y-4">
           <Input
@@ -43,9 +79,13 @@ export default function Login() {
             id="login-email"
             type="email"
             required
+            autoComplete="email"
             placeholder="you@company.com"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (error) setError('');
+            }}
             icon={Mail}
           />
 
@@ -54,9 +94,13 @@ export default function Login() {
             id="login-password"
             type={showPassword ? 'text' : 'password'}
             required
+            autoComplete="current-password"
             placeholder="••••••••"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (error) setError('');
+            }}
             icon={Lock}
             endAdornment={
               <button
@@ -84,7 +128,7 @@ export default function Login() {
 
             <button
               type="button"
-              onClick={() => alert('Phase 1 demo: Password reset is not active yet.')}
+              onClick={() => alert('Password reset will be available in future releases.')}
               className="text-brand-600 hover:text-brand-700 font-medium transition-colors"
             >
               Forgot password?
@@ -95,18 +139,14 @@ export default function Login() {
             type="submit"
             variant="primary"
             size="lg"
+            disabled={isSubmitting}
             className="w-full mt-2"
-            icon={ArrowRight}
+            icon={isSubmitting ? Loader2 : ArrowRight}
             iconPosition="right"
           >
-            Sign In to Dashboard
+            {isSubmitting ? 'Signing in...' : 'Sign In to Dashboard'}
           </Button>
         </form>
-
-        {/* Demo Credentials Note */}
-        <div className="mt-4 p-3 bg-slate-50 border border-slate-200/80 rounded-xl text-[11px] text-slate-500 text-center">
-          <span className="font-semibold text-slate-700">Phase 1 Demo:</span> Click &quot;Sign In&quot; to immediately access the dashboard.
-        </div>
 
         {/* Link to Register */}
         <div className="text-center mt-6 pt-5 border-t border-slate-100 text-xs text-slate-600">

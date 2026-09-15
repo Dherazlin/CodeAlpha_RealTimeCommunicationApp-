@@ -21,8 +21,8 @@ import MeetingCard from '../components/dashboard/MeetingCard';
 import ActivityItem from '../components/dashboard/ActivityItem';
 import EmptyState from '../components/common/EmptyState';
 import Button from '../components/common/Button';
+import { useAuth } from '../context/AuthContext';
 import {
-  currentUser,
   upcomingMeetings as initialUpcoming,
   recentMeetings as initialRecent,
   recentActivities,
@@ -30,14 +30,17 @@ import {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'meetings' | 'recent' | 'files' | 'settings' | 'help'
   const [meetingView, setMeetingView] = useState('upcoming'); // 'upcoming' | 'recent'
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Determine dynamic greeting
+  // Determine dynamic greeting & user display name
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const firstName = user?.name ? user.name.split(' ')[0] : 'User';
+
 
   // Filter meetings based on search
   const filteredUpcoming = initialUpcoming.filter(
@@ -76,7 +79,7 @@ export default function Dashboard() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                {greeting}, {currentUser.name.split(' ')[0]} 👋
+                {greeting}, {firstName} 👋
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 mt-1">
                 Collaborate with your team, launch instant rooms, or manage upcoming calls.

@@ -1,9 +1,15 @@
 import React from 'react';
 import { Menu, Search, Bell, Sparkles } from 'lucide-react';
 import Avatar from '../common/Avatar';
-import { currentUser } from '../../data/mockData';
+import { useAuth } from '../../context/AuthContext';
 
 export default function Header({ onOpenSidebar, searchQuery = '', onSearchChange }) {
+  const { user } = useAuth();
+
+  const userName = user?.name || 'User';
+  const userRole = user?.role || 'Member';
+  const userAvatar = user?.avatar || '';
+
   return (
     <header className="h-16 px-4 lg:px-8 bg-white border-b border-slate-200/80 flex items-center justify-between sticky top-0 z-20">
       <div className="flex items-center gap-3 lg:gap-4 flex-1 max-w-lg">
@@ -35,9 +41,9 @@ export default function Header({ onOpenSidebar, searchQuery = '', onSearchChange
 
       {/* Right controls */}
       <div className="flex items-center gap-3">
-        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-brand-50 border border-brand-100 text-brand-700 text-xs rounded-full font-medium">
-          <Sparkles className="w-3.5 h-3.5 text-brand-600" />
-          <span>Demo Environment</span>
+        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200/80 text-emerald-700 text-xs rounded-full font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Connected</span>
         </div>
 
         <button
@@ -53,18 +59,17 @@ export default function Header({ onOpenSidebar, searchQuery = '', onSearchChange
 
         <div className="flex items-center gap-2 pl-1">
           <Avatar
-            src={currentUser.avatar}
-            name={currentUser.name}
-            initials={currentUser.initials}
+            src={userAvatar}
+            name={userName}
             size="sm"
-            status={currentUser.status}
+            status="online"
           />
           <div className="hidden md:block text-left">
             <p className="text-xs font-semibold text-slate-800 leading-tight">
-              {currentUser.name}
+              {userName}
             </p>
             <p className="text-[10px] text-slate-500 leading-tight">
-              {currentUser.role}
+              {userRole}
             </p>
           </div>
         </div>

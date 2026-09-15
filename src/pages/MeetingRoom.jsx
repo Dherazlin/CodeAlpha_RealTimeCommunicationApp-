@@ -9,10 +9,12 @@ import MoreMenu from '../components/meeting/MoreMenu';
 import ScreenShareModal from '../components/meeting/ScreenShareModal';
 import Modal from '../components/common/Modal';
 import Button from '../components/common/Button';
+import { useAuth } from '../context/AuthContext';
 import {
   mockParticipantsInRoom,
   mockChatMessages as initialMessages,
-  currentUser,
+  upcomingMeetings,
+  recentMeetings,
 } from '../data/mockData';
 import { PhoneOff, Settings, Info, Copy, Check, ShieldCheck } from 'lucide-react';
 
@@ -20,11 +22,40 @@ export default function MeetingRoom() {
   const { roomId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
 
-  const meetingTitle = location.state?.title || 'Product Design Weekly Sync';
+  const matchedMeeting =
+    upcomingMeetings.find((m) => m.id === roomId) ||
+    recentMeetings.find((m) => m.id === roomId);
+  const meetingTitle =
+    location.state?.title ||
+    matchedMeeting?.title ||
+    (roomId ? `Meeting ${roomId}` : 'Meeting Room');
 
-  // Local React states for Phase 1 UI interactions
-  const [participants, setParticipants] = useState(mockParticipantsInRoom);
+  // Compute initials
+  const userInitials = user?.name
+    ? user.name
+        .split(' ')
+        .map((n) => n[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase()
+    : 'YOU';
+
+  // Initialize room participants with authenticated user info for self tile
+  const [participants, setParticipants] = useState(() =>
+    mockParticipantsInRoom.map((p) =>
+      p.isSelf
+        ? {
+            ...p,
+            name: user?.name ? `${user.name} (You)` : 'You',
+            initials: userInitials,
+            avatar: user?.avatar || p.avatar,
+          }
+        : p
+    )
+  );
+
   const [messages, setMessages] = useState(initialMessages);
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCameraOn, setIsCameraOn] = useState(true);
@@ -72,8 +103,8 @@ export default function MeetingRoom() {
     const newMsg = {
       id: `msg_${Date.now()}`,
       sender: 'You',
-      initials: currentUser.initials,
-      avatar: currentUser.avatar,
+      initials: userInitials,
+      avatar: user?.avatar || '',
       text,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       isSelf: true,

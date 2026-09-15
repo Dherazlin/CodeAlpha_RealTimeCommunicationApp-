@@ -1,20 +1,59 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Video, Mail, Lock, User, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Video, Mail, Lock, User, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
 import Input from '../components/common/Input';
 import Button from '../components/common/Button';
+import { useAuth } from '../context/AuthContext';
 
 export default function Register() {
   const navigate = useNavigate();
-  const [name, setName] = useState('Alex Morgan');
-  const [email, setEmail] = useState('alex.morgan@company.com');
-  const [password, setPassword] = useState('password123');
-  const [confirmPassword, setConfirmPassword] = useState('password123');
-  const [agreeTerms, setAgreeTerms] = useState(true);
+  const { register } = useAuth();
 
-  const handleRegister = (e) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [agreeTerms, setAgreeTerms] = useState(true);
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleRegister = async (e) => {
     e.preventDefault();
-    navigate('/dashboard');
+    setError('');
+
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+
+    if (!trimmedName || !trimmedEmail || !password || !confirmPassword) {
+      setError('Please fill in all required fields.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match. Please re-enter.');
+      return;
+    }
+
+    if (!agreeTerms) {
+      setError('You must agree to the Terms of Service to register.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await register(trimmedName, trimmedEmail, password);
+      navigate('/dashboard', { replace: true });
+    } catch (err) {
+      setError(err.message || 'Registration failed. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -32,9 +71,20 @@ export default function Register() {
             Create your account
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Get started with seamless team video meetings
+            Get started with real-time team meetings
           </p>
         </div>
+
+        {/* Error Banner */}
+        {error && (
+          <div
+            className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-150"
+            role="alert"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">{error}</span>
+          </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleRegister} className="space-y-3.5">
@@ -45,7 +95,10 @@ export default function Register() {
             required
             placeholder="Alex Morgan"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (error) setError('');
+            }}
             icon={User}
           />
 
@@ -56,7 +109,10 @@ export default function Register() {
             required
             placeholder="alex.morgan@company.com"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (error) setError('');
+            }}
             icon={Mail}
           />
 
@@ -65,9 +121,12 @@ export default function Register() {
             id="register-password"
             type="password"
             required
-            placeholder="At least 8 characters"
+            placeholder="At least 6 characters"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (error) setError('');
+            }}
             icon={Lock}
           />
 
@@ -78,7 +137,10 @@ export default function Register() {
             required
             placeholder="Repeat password"
             value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
+            onChange={(e) => {
+              setConfirmPassword(e.target.value);
+              if (error) setError('');
+            }}
             icon={Lock}
           />
 
@@ -93,14 +155,7 @@ export default function Register() {
                 className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 mt-0.5"
               />
               <span>
-                I agree to the{' '}
-                <a href="#terms" className="text-brand-600 hover:underline">
-                  Terms of Service
-                </a>{' '}
-                and{' '}
-                <a href="#privacy" className="text-brand-600 hover:underline">
-                  Privacy Policy
-                </a>
+                I agree to the Terms of Service and Privacy Policy
               </span>
             </label>
           </div>
@@ -109,11 +164,12 @@ export default function Register() {
             type="submit"
             variant="primary"
             size="lg"
+            disabled={isSubmitting}
             className="w-full mt-2"
-            icon={ArrowRight}
+            icon={isSubmitting ? Loader2 : ArrowRight}
             iconPosition="right"
           >
-            Create Account & Continue
+            {isSubmitting ? 'Creating account...' : 'Create Account & Continue'}
           </Button>
         </form>
 

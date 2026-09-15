@@ -7,9 +7,9 @@ import { meetingCategories, generateRoomId } from '../data/mockData';
 
 export default function CreateMeeting() {
   const navigate = useNavigate();
-  const [title, setTitle] = useState('Design Review & Feedback');
-  const [description, setDescription] = useState('Review new interface layouts and discuss Phase 2 roadmap.');
-  const [category, setCategory] = useState('design');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('general');
   const [privacy, setPrivacy] = useState('public'); // 'public' | 'org'
   const [dateOption, setDateOption] = useState('now'); // 'now' | 'scheduled'
 
@@ -56,10 +56,9 @@ export default function CreateMeeting() {
         {/* Form */}
         <form onSubmit={handleCreate} className="space-y-4">
           <Input
-            label="Meeting Title"
+            label="Meeting Title (Optional)"
             id="meeting-title"
             type="text"
-            required
             placeholder="e.g. Weekly Product Sync"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -181,7 +180,7 @@ export default function CreateMeeting() {
               size="md"
               icon={Plus}
             >
-              Create & Launch Meeting
+              Create Meeting
             </Button>
           </div>
         </form>
