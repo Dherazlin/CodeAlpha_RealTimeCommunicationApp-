@@ -1,8 +1,11 @@
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { Server } from 'socket.io';
 import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
+import { setupSocketHandlers } from './socket/socketHandler.js';
 
 // Load environment variables
 dotenv.config();
@@ -12,18 +15,23 @@ connectDB();
 
 const app = express();
 
+// Create HTTP server for Express and Socket.io
+const server = http.createServer(app);
+
 // CORS Configuration
 const allowedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
+const corsOriginValidator = (origin, callback) => {
+  // Allow requests with no origin (like mobile apps or curl/Postman) or matching origin
+  if (!origin || origin === allowedOrigin || origin.startsWith('http://localhost:')) {
+    callback(null, true);
+  } else {
+    callback(new Error('CORS blocked origin'));
+  }
+};
+
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl/Postman) or matching origin
-      if (!origin || origin === allowedOrigin || origin.startsWith('http://localhost:')) {
-        callback(null, true);
-      } else {
-        callback(new Error('CORS blocked origin'));
-      }
-    },
+    origin: corsOriginValidator,
     credentials: true,
   })
 );
@@ -62,9 +70,23 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Initialize Socket.io
+const io = new Server(server, {
+  cors: {
+    origin: corsOriginValidator,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+
+// Attach Socket.io event handlers
+setupSocketHandlers(io);
+
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`[Korus Server] Express backend running on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`[Korus Server] Express backend with Socket.io running on port ${PORT}`);
   console.log(`[Korus Server] Health check available at http://localhost:${PORT}/api/health`);
 });

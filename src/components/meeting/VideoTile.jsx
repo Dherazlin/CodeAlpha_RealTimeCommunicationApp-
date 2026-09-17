@@ -1,9 +1,18 @@
-import React from 'react';
-import { Mic, MicOff, VideoOff, Crown, Pin } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { Mic, MicOff, VideoOff, Crown } from 'lucide-react';
 import Avatar from '../common/Avatar';
 
-export default function VideoTile({ participant, isSelf = false }) {
+export default function VideoTile({ participant, stream, isSelf = false }) {
   const { name, avatar, initials, isHost, isMicOn, isCameraOn, isSpeaking } = participant;
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream, isCameraOn]);
+
+  const hasVideoStream = Boolean(stream && stream.getVideoTracks && stream.getVideoTracks().length > 0);
 
   return (
     <div
@@ -13,14 +22,34 @@ export default function VideoTile({ participant, isSelf = false }) {
           : 'border-slate-800/90 hover:border-slate-700'
       }`}
     >
-      {/* Video / Camera Feed Placeholder */}
+      {/* Video / Camera Feed Element */}
       {isCameraOn ? (
         <div className="relative w-full h-full flex items-center justify-center bg-slate-950">
-          <img
-            src={avatar}
-            alt={name}
-            className="w-full h-full object-cover opacity-90 transition-transform duration-300 hover:scale-102"
-          />
+          {hasVideoStream ? (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted={isSelf}
+              className={`w-full h-full object-cover ${isSelf ? 'scale-x-[-1]' : ''}`}
+            />
+          ) : avatar ? (
+            <img
+              src={avatar}
+              alt={name}
+              className="w-full h-full object-cover opacity-90 transition-transform duration-300"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-950">
+              <Avatar
+                name={name}
+                initials={initials}
+                size="2xl"
+                isSpeaking={isSpeaking}
+                className="shadow-xl ring-4 ring-slate-800"
+              />
+            </div>
+          )}
           {/* Subtle vignette */}
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-slate-950/30 pointer-events-none" />
         </div>

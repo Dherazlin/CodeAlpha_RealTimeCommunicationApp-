@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import MeetingHeader from '../components/meeting/MeetingHeader';
 import VideoGrid from '../components/meeting/VideoGrid';
@@ -10,19 +10,16 @@ import ScreenShareModal from '../components/meeting/ScreenShareModal';
 import Modal from '../components/common/Modal';
 import Button from '../components/common/Button';
 import { useAuth } from '../context/AuthContext';
-import {
-  mockParticipantsInRoom,
-  mockChatMessages as initialMessages,
-  upcomingMeetings,
-  recentMeetings,
-} from '../data/mockData';
-import { PhoneOff, Settings, Info, Copy, Check, ShieldCheck } from 'lucide-react';
+import { createMeetingSocket } from '../utils/socket';
+import { useWebRTC } from '../hooks/useWebRTC';
+import { upcomingMeetings, recentMeetings } from '../data/mockData';
+import { PhoneOff, Settings, Info, Copy, Check, Users, AlertCircle } from 'lucide-react';
 
 export default function MeetingRoom() {
   const { roomId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
 
   const matchedMeeting =
     upcomingMeetings.find((m) => m.id === roomId) ||
@@ -32,7 +29,7 @@ export default function MeetingRoom() {
     matchedMeeting?.title ||
     (roomId ? `Meeting ${roomId}` : 'Meeting Room');
 
-  // Compute initials
+  // Compute initials for authenticated user
   const userInitials = user?.name
     ? user.name
         .split(' ')
@@ -42,23 +39,30 @@ export default function MeetingRoom() {
         .toUpperCase()
     : 'YOU';
 
-  // Initialize room participants with authenticated user info for self tile
-  const [participants, setParticipants] = useState(() =>
-    mockParticipantsInRoom.map((p) =>
-      p.isSelf
-        ? {
-            ...p,
-            name: user?.name ? `${user.name} (You)` : 'You',
-            initials: userInitials,
-            avatar: user?.avatar || p.avatar,
-          }
-        : p
-    )
-  );
+  // Real-time states
+  const [activeSocket, setActiveSocket] = useState(null);
+  const [participants, setParticipants] = useState(() => [
+    {
+      id: user?.id || 'usr_local',
+      socketId: 'local_pending',
+      name: user?.name ? `${user.name} (You)` : 'You',
+      initials: userInitials,
+      avatar: user?.avatar || '',
+      role: 'Host',
+      isHost: true,
+      isSelf: true,
+      isMicOn: true,
+      isCameraOn: true,
+      isSpeaking: false,
+    },
+  ]);
 
-  const [messages, setMessages] = useState(initialMessages);
-  const [isMicOn, setIsMicOn] = useState(true);
-  const [isCameraOn, setIsCameraOn] = useState(true);
+  const [messages, setMessages] = useState([]);
+  const [socketConnectionStatus, setSocketConnectionStatus] = useState('connecting');
+  const [notification, setNotification] = useState(null);
+  const [hasUnreadChat, setHasUnreadChat] = useState(false);
+
+  // Modals and Drawers
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -68,53 +72,272 @@ export default function MeetingRoom() {
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [copiedInfo, setCopiedInfo] = useState(false);
 
-  // Toggle local self microphone state
-  const handleToggleMic = () => {
-    const nextState = !isMicOn;
-    setIsMicOn(nextState);
+  // Socket reference
+  const socketRef = useRef(null);
+  const notificationTimeoutRef = useRef(null);
+
+  // Show subtle toast notification
+  const showNotification = useCallback((text) => {
+    if (notificationTimeoutRef.current) {
+      clearTimeout(notificationTimeoutRef.current);
+    }
+    setNotification(text);
+    notificationTimeoutRef.current = setTimeout(() => {
+      setNotification(null);
+    }, 4000);
+  }, []);
+
+  // WebRTC Hook for 1-to-1 Audio & Video
+  const cleanRoomId = (roomId || '').trim().toUpperCase();
+  const {
+    localStream,
+    remoteStream,
+    isMicOn,
+    isCameraOn,
+    permissionStatus,
+    permissionError,
+    webrtcState,
+    initiateOffer,
+    toggleMic,
+    toggleCamera,
+    cleanup: cleanupWebRTC,
+  } = useWebRTC({
+    socket: activeSocket,
+    roomId: cleanRoomId,
+    onNotification: showNotification,
+  });
+
+  // Socket.io Lifecycle & Real-Time Presence
+  useEffect(() => {
+    if (!token || !cleanRoomId) {
+      setSocketConnectionStatus('error');
+      return;
+    }
+
+    setSocketConnectionStatus('connecting');
+    const socket = createMeetingSocket(token);
+    socketRef.current = socket;
+    setActiveSocket(socket);
+
+    // Connect socket
+    socket.connect();
+
+    // On successful connection
+    socket.on('connect', () => {
+      console.log(`[MeetingRoom] Connected to Socket.io (${socket.id}). Joining room: ${cleanRoomId}`);
+      setSocketConnectionStatus('connected');
+      socket.emit('join-room', { roomId: cleanRoomId });
+    });
+
+    // On connection error
+    socket.on('connect_error', (error) => {
+      console.warn('[MeetingRoom] Socket connection error:', error.message);
+      setSocketConnectionStatus('error');
+      showNotification(`Connection error: ${error.message}`);
+    });
+
+    // On disconnection
+    socket.on('disconnect', (reason) => {
+      console.log('[MeetingRoom] Socket disconnected:', reason);
+      setSocketConnectionStatus('disconnected');
+    });
+
+    // Reconnection events
+    socket.io.on('reconnect_attempt', () => {
+      setSocketConnectionStatus('reconnecting');
+    });
+
+    socket.io.on('reconnect', () => {
+      console.log('[MeetingRoom] Reconnected. Rejoining room:', cleanRoomId);
+      setSocketConnectionStatus('connected');
+      socket.emit('join-room', { roomId: cleanRoomId });
+    });
+
+    // Receive initial room participants snapshot
+    socket.on('room-users', ({ participants: roomUsers }) => {
+      console.log('[MeetingRoom] Received room users snapshot:', roomUsers);
+      setParticipants(
+        roomUsers.map((p) => {
+          const isSelf = p.socketId === socket.id;
+          return {
+            ...p,
+            name: isSelf && user?.name ? `${user.name} (You)` : p.name,
+            isSelf,
+            initials: p.name
+              ? p.name
+                  .split(' ')
+                  .map((n) => n[0])
+                  .slice(0, 2)
+                  .join('')
+                  .toUpperCase()
+              : 'U',
+            isMicOn: isSelf ? isMicOn : (p.isMicOn ?? true),
+            isCameraOn: isSelf ? isCameraOn : (p.isCameraOn ?? true),
+          };
+        })
+      );
+    });
+
+    // Another participant joined the room -> existing user initiates WebRTC offer
+    socket.on('participant-joined', ({ participant }) => {
+      console.log('[MeetingRoom] Participant joined room:', participant);
+      setParticipants((prev) => {
+        const exists = prev.some((p) => p.socketId === participant.socketId);
+        if (exists) return prev;
+
+        const isSelf = participant.socketId === socket.id;
+        const newEntry = {
+          ...participant,
+          name: isSelf && user?.name ? `${user.name} (You)` : participant.name,
+          isSelf,
+          initials: participant.name
+            ? participant.name
+                .split(' ')
+                .map((n) => n[0])
+                .slice(0, 2)
+                .join('')
+                .toUpperCase()
+            : 'U',
+        };
+        return [...prev, newEntry];
+      });
+
+      showNotification(`${participant.name} joined the meeting`);
+
+      // Deterministic WebRTC negotiation: Existing participant initiates the offer to the newly joined peer
+      if (participant.socketId !== socket.id) {
+        console.log(`[MeetingRoom] Initiating WebRTC offer to new participant: ${participant.socketId}`);
+        initiateOffer(participant.socketId);
+      }
+    });
+
+    // A participant left the room
+    socket.on('participant-left', ({ socketId, userName }) => {
+      console.log(`[MeetingRoom] Participant left (${socketId}): ${userName}`);
+      setParticipants((prev) => prev.filter((p) => p.socketId !== socketId));
+      if (userName) {
+        showNotification(`${userName} left the meeting`);
+      }
+    });
+
+    // Media toggle update from remote peer
+    socket.on('user-toggle-media', ({ socketId, isMicOn: peerMic, isCameraOn: peerCam }) => {
+      setParticipants((prev) =>
+        prev.map((p) => {
+          if (p.socketId === socketId) {
+            return {
+              ...p,
+              isMicOn: typeof peerMic === 'boolean' ? peerMic : p.isMicOn,
+              isCameraOn: typeof peerCam === 'boolean' ? peerCam : p.isCameraOn,
+            };
+          }
+          return p;
+        })
+      );
+    });
+
+    // Real-time chat message broadcast received
+    socket.on('receive-message', (msg) => {
+      console.log('[MeetingRoom] Received chat message:', msg);
+      const isSelf = msg.userId === user?.id;
+
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+
+        return [
+          ...prev,
+          {
+            ...msg,
+            sender: isSelf ? 'You' : msg.userName,
+            initials: msg.userName
+              ? msg.userName
+                  .split(' ')
+                  .map((n) => n[0])
+                  .slice(0, 2)
+                  .join('')
+                  .toUpperCase()
+              : 'U',
+            isSelf,
+          },
+        ];
+      });
+
+      if (!isSelf && !isChatOpen) {
+        setHasUnreadChat(true);
+      }
+    });
+
+    // Server error notification
+    socket.on('error-message', ({ message }) => {
+      console.warn('[MeetingRoom] Server error message:', message);
+      showNotification(message);
+    });
+
+    // Cleanup on unmount or room change
+    return () => {
+      console.log(`[MeetingRoom] Cleaning up socket connection for room: ${cleanRoomId}`);
+      if (notificationTimeoutRef.current) {
+        clearTimeout(notificationTimeoutRef.current);
+      }
+      socket.emit('leave-room', { roomId: cleanRoomId });
+      socket.removeAllListeners();
+      socket.disconnect();
+      socketRef.current = null;
+      setActiveSocket(null);
+    };
+  }, [cleanRoomId, token, user?.id, initiateOffer, showNotification, isChatOpen]);
+
+  // Keep self participant media state in sync with useWebRTC hook
+  useEffect(() => {
     setParticipants((prev) =>
-      prev.map((p) => (p.isSelf ? { ...p, isMicOn: nextState } : p))
+      prev.map((p) => (p.isSelf ? { ...p, isMicOn, isCameraOn } : p))
     );
+  }, [isMicOn, isCameraOn]);
+
+  // Handle local microphone toggle
+  const handleToggleMic = () => {
+    toggleMic();
   };
 
-  // Toggle local self camera state
+  // Handle local camera toggle
   const handleToggleCamera = () => {
-    const nextState = !isCameraOn;
-    setIsCameraOn(nextState);
-    setParticipants((prev) =>
-      prev.map((p) => (p.isSelf ? { ...p, isCameraOn: nextState } : p))
-    );
+    toggleCamera();
   };
 
   // Toggle Participant drawer
   const handleToggleParticipants = () => {
     setIsParticipantsOpen((prev) => !prev);
-    if (!isParticipantsOpen) setIsChatOpen(false); // Clean one-at-a-time drawer on smaller screens
+    if (!isParticipantsOpen) setIsChatOpen(false);
   };
 
   // Toggle Chat drawer
   const handleToggleChat = () => {
-    setIsChatOpen((prev) => !prev);
-    if (!isChatOpen) setIsParticipantsOpen(false);
+    const nextState = !isChatOpen;
+    setIsChatOpen(nextState);
+    if (nextState) {
+      setHasUnreadChat(false);
+      setIsParticipantsOpen(false);
+    }
   };
 
-  // Send a new mock chat message (local React state)
+  // Send real-time chat message via Socket.io
   const handleSendMessage = (text) => {
-    const newMsg = {
-      id: `msg_${Date.now()}`,
-      sender: 'You',
-      initials: userInitials,
-      avatar: user?.avatar || '',
-      text,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isSelf: true,
-    };
-    setMessages((prev) => [...prev, newMsg]);
+    if (!socketRef.current || !text.trim()) return;
+
+    socketRef.current.emit('send-message', {
+      roomId: cleanRoomId,
+      message: text.trim(),
+    });
   };
 
   // Leave meeting confirm
   const handleConfirmLeave = () => {
     setIsLeaveModalOpen(false);
+    cleanupWebRTC();
+    if (socketRef.current) {
+      socketRef.current.emit('leave-room', { roomId: cleanRoomId });
+      socketRef.current.disconnect();
+    }
     navigate('/dashboard');
   };
 
@@ -124,6 +347,14 @@ export default function MeetingRoom() {
     setTimeout(() => setCopiedInfo(false), 2000);
   };
 
+  // Combined connection status for header
+  const headerConnectionStatus =
+    webrtcState === 'connected'
+      ? 'connected'
+      : socketConnectionStatus === 'connected'
+      ? 'connected'
+      : socketConnectionStatus;
+
   return (
     <div className="h-screen w-screen bg-slate-950 flex flex-col justify-between overflow-hidden relative selection:bg-brand-500 selection:text-white">
       {/* Top Meeting Header */}
@@ -131,11 +362,48 @@ export default function MeetingRoom() {
         roomId={roomId || 'KOR-ROOM'}
         meetingTitle={meetingTitle}
         participantCount={participants.length}
+        connectionStatus={headerConnectionStatus}
       />
 
-      {/* Main Video Grid Area */}
+      {/* Permission Denied / Device Warning Banner */}
+      {permissionError && (
+        <div
+          className="mx-4 mt-2 px-3 py-2 bg-amber-950/80 border border-amber-800/80 text-amber-200 text-xs rounded-xl flex items-center justify-between z-30 shrink-0 animate-in fade-in"
+          role="alert"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{permissionError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="underline hover:text-white text-xs font-semibold ml-2 shrink-0"
+          >
+            Retry Permissions
+          </button>
+        </div>
+      )}
+
+      {/* Subtle Toast Notification Banner */}
+      {notification && (
+        <div
+          className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-slate-800/95 border border-slate-700/90 text-slate-100 text-xs px-4 py-2 rounded-full shadow-xl backdrop-blur-md flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200 pointer-events-none"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="w-2 h-2 rounded-full bg-brand-400 animate-ping" />
+          <span className="font-medium">{notification}</span>
+        </div>
+      )}
+
+      {/* Main Video Grid Area with Real WebRTC Streams */}
       <div className="flex-1 flex min-h-0 relative overflow-hidden">
-        <VideoGrid participants={participants} />
+        <VideoGrid
+          participants={participants}
+          localStream={localStream}
+          remoteStream={remoteStream}
+        />
 
         {/* Slide-out Participant Panel */}
         <ParticipantPanel
@@ -172,14 +440,14 @@ export default function MeetingRoom() {
         participantCount={participants.length}
         isChatOpen={isChatOpen}
         onToggleChat={handleToggleChat}
-        hasUnreadChat={false}
+        hasUnreadChat={hasUnreadChat}
         onOpenScreenShare={() => setIsScreenShareOpen(true)}
         isMoreOpen={isMoreOpen}
         onToggleMore={() => setIsMoreOpen((prev) => !prev)}
         onLeaveMeeting={() => setIsLeaveModalOpen(true)}
       />
 
-      {/* Screen Share Preview Modal (Adhering to strict Phase 1 rules) */}
+      {/* Screen Share Preview Modal */}
       <ScreenShareModal
         isOpen={isScreenShareOpen}
         onClose={() => setIsScreenShareOpen(false)}
@@ -216,37 +484,35 @@ export default function MeetingRoom() {
       <Modal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
-        title="Audio & Video Settings (Preview)"
-        description="Hardware devices and noise suppression will be configurable in Phase 2."
+        title="Audio & Video Settings"
+        description="Hardware device selection and WebRTC media parameters."
         maxWidth="max-w-md"
       >
         <div className="space-y-4 pt-2 text-xs">
           <div>
             <label className="font-semibold text-slate-700 block mb-1">
-              Microphone Device
+              Microphone Track
             </label>
-            <select
-              className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-700"
-              disabled
-            >
-              <option>Default - Built-in Microphone (Simulated)</option>
-            </select>
+            <div className="p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-700 font-mono text-[11px]">
+              {localStream && localStream.getAudioTracks().length > 0
+                ? localStream.getAudioTracks()[0].label || 'Default Microphone (Active)'
+                : 'No Microphone Track Available'}
+            </div>
           </div>
 
           <div>
             <label className="font-semibold text-slate-700 block mb-1">
-              Camera Device
+              Camera Track
             </label>
-            <select
-              className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-700"
-              disabled
-            >
-              <option>Default - HD Web Camera (Simulated)</option>
-            </select>
+            <div className="p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-700 font-mono text-[11px]">
+              {localStream && localStream.getVideoTracks().length > 0
+                ? localStream.getVideoTracks()[0].label || 'Default Camera (Active)'
+                : 'No Camera Track Available'}
+            </div>
           </div>
 
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-500">
-            Real device enumeration using <code className="text-brand-600">navigator.mediaDevices.enumerateDevices()</code> will be implemented in Phase 2.
+            WebRTC 1-to-1 Connection State: <code className="text-brand-600 font-semibold">{webrtcState}</code>
           </div>
 
           <div className="flex justify-end pt-2">
@@ -266,7 +532,7 @@ export default function MeetingRoom() {
         isOpen={isInfoModalOpen}
         onClose={() => setIsInfoModalOpen(false)}
         title="Meeting Information"
-        description="Share this link to invite team members into this session."
+        description="Share this link or room code to invite teammates into this session."
         maxWidth="max-w-md"
       >
         <div className="space-y-4 pt-2 text-xs">

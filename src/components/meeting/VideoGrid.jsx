@@ -3,7 +3,11 @@ import VideoTile from './VideoTile';
 import EmptyState from '../common/EmptyState';
 import { Users } from 'lucide-react';
 
-export default function VideoGrid({ participants = [] }) {
+export default function VideoGrid({
+  participants = [],
+  localStream = null,
+  remoteStream = null,
+}) {
   if (!participants || participants.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center p-6">
@@ -32,8 +36,9 @@ export default function VideoGrid({ participants = [] }) {
       <div className={`grid w-full gap-3 sm:gap-4 h-full max-h-[calc(100vh-140px)] ${getGridClasses()}`}>
         {participants.map((participant) => (
           <VideoTile
-            key={participant.id}
+            key={participant.socketId || participant.id}
             participant={participant}
+            stream={participant.isSelf ? localStream : remoteStream}
             isSelf={participant.isSelf}
           />
         ))}

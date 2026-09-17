@@ -5,7 +5,8 @@ import Badge from '../common/Badge';
 export default function MeetingHeader({
   roomId,
   meetingTitle = 'Product Design Weekly Sync',
-  participantCount = 4,
+  participantCount = 1,
+  connectionStatus = 'connected',
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -53,15 +54,39 @@ export default function MeetingHeader({
         </button>
       </div>
 
-      {/* Right: Mock Connection & Security badges */}
+      {/* Right: Connection & Security badges */}
       <div className="flex items-center gap-2.5">
-        {/* Connection status */}
+        {/* Real-time Socket.io Connection status */}
         <div
-          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-[11px] text-slate-300 font-medium"
-          title="Demo Quality Indicator"
+          className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-colors ${
+            connectionStatus === 'connected'
+              ? 'bg-slate-800/80 border-slate-700 text-slate-300'
+              : connectionStatus === 'connecting' || connectionStatus === 'reconnecting'
+              ? 'bg-amber-950/40 border-amber-800 text-amber-300'
+              : 'bg-rose-950/40 border-rose-800 text-rose-300'
+          }`}
+          title={`Socket.io Connection: ${connectionStatus}`}
         >
-          <Wifi className="w-3 h-3 text-emerald-400" />
-          <span>Demo: Good</span>
+          <span
+            className={`w-2 h-2 rounded-full ${
+              connectionStatus === 'connected'
+                ? 'bg-emerald-400'
+                : connectionStatus === 'connecting' || connectionStatus === 'reconnecting'
+                ? 'bg-amber-400 animate-pulse'
+                : 'bg-rose-500'
+            }`}
+          />
+          <span className="capitalize">
+            {connectionStatus === 'connected'
+              ? 'Connected'
+              : connectionStatus === 'connecting'
+              ? 'Connecting...'
+              : connectionStatus === 'reconnecting'
+              ? 'Reconnecting...'
+              : connectionStatus === 'error'
+              ? 'Connection Error'
+              : 'Disconnected'}
+          </span>
         </div>
 
         {/* Mock encryption */}

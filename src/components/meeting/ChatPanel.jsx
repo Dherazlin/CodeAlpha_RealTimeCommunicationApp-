@@ -129,7 +129,7 @@ export default function ChatPanel({
           </button>
         </div>
         <p className="text-[10px] text-slate-500 text-center mt-2">
-          Messages in Phase 1 are stored in local React state.
+          Real-time meeting chat powered by Socket.io
         </p>
       </form>
     </div>

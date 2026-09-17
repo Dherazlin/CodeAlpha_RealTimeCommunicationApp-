@@ -124,7 +124,7 @@ export default function ParticipantPanel({
 
       {/* Footer Info */}
       <div className="p-3 border-t border-slate-800 text-[11px] text-slate-500 text-center shrink-0">
-        All participant controls are local in Phase 1
+        Real-time participant presence powered by Socket.io
       </div>
     </div>
   );
