@@ -70,55 +70,68 @@ export default function ParticipantPanel({
             className="bg-transparent border-slate-800 text-slate-400 py-6"
           />
         ) : (
-          filtered.map((participant) => (
-            <div
-              key={participant.id}
-              className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-800/70 transition-colors"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <Avatar
-                  src={participant.avatar}
-                  name={participant.name}
-                  initials={participant.initials}
-                  size="sm"
-                  isSpeaking={participant.isSpeaking}
-                />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold text-slate-200 truncate">
-                      {participant.name}
-                    </span>
-                    {participant.isHost && (
-                      <Crown className="w-3 h-3 text-amber-400 shrink-0" title="Host" />
-                    )}
-                  </div>
-                  <span className="text-[10px] text-slate-400">
-                    {participant.isSelf ? 'You' : participant.role || 'Participant'}
-                  </span>
-                </div>
-              </div>
+          filtered.map((participant) => {
+            const cleanName = participant.name
+              ? participant.name.replace(/\s*\(You\)$/, '')
+              : 'Participant';
 
-              {/* Status Icons */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                <div
-                  className={`p-1 rounded-md ${
-                    participant.isMicOn ? 'text-slate-400' : 'text-rose-400 bg-rose-500/10'
-                  }`}
-                  title={participant.isMicOn ? 'Mic On' : 'Mic Muted'}
-                >
-                  {participant.isMicOn ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+            return (
+              <div
+                key={participant.socketId || participant.userId || participant.id}
+                className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-800/70 transition-colors"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Avatar
+                    src={participant.avatar}
+                    name={cleanName}
+                    initials={participant.initials}
+                    size="sm"
+                    isSpeaking={participant.isSpeaking}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-semibold text-slate-200 truncate">
+                        {cleanName}
+                      </span>
+                      {participant.isSelf && (
+                        <span className="text-[11px] font-normal text-slate-400 shrink-0">
+                          (You)
+                        </span>
+                      )}
+                      {participant.isHost && (
+                        <Crown className="w-3 h-3 text-amber-400 shrink-0" title="Host" />
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-400">
+                      {participant.isHost
+                        ? 'Host'
+                        : participant.role || (participant.isSelf ? 'Member' : 'Participant')}
+                    </span>
+                  </div>
                 </div>
-                <div
-                  className={`p-1 rounded-md ${
-                    participant.isCameraOn ? 'text-slate-400' : 'text-rose-400 bg-rose-500/10'
-                  }`}
-                  title={participant.isCameraOn ? 'Camera On' : 'Camera Off'}
-                >
-                  {participant.isCameraOn ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
+
+                {/* Status Icons */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <div
+                    className={`p-1 rounded-md ${
+                      participant.isMicOn ? 'text-slate-400' : 'text-rose-400 bg-rose-500/10'
+                    }`}
+                    title={participant.isMicOn ? 'Mic On' : 'Mic Muted'}
+                  >
+                    {participant.isMicOn ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                  </div>
+                  <div
+                    className={`p-1 rounded-md ${
+                      participant.isCameraOn ? 'text-slate-400' : 'text-rose-400 bg-rose-500/10'
+                    }`}
+                    title={participant.isCameraOn ? 'Camera On' : 'Camera Off'}
+                  >
+                    {participant.isCameraOn ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 

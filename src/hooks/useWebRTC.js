@@ -2,17 +2,18 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { rtcConfig } from '../config/webrtc';
 
 /**
- * Custom hook managing 1-to-1 WebRTC Audio & Video communication for Korus Phase 4
+ * Custom hook managing Full-Mesh WebRTC Audio & Video communication for Korus Phase 5
+ * Supports multi-participant video meetings (3–6 participants).
  *
  * @param {Object} params
  * @param {import('socket.io-client').Socket | null} params.socket - Active authenticated Socket.io client
  * @param {string} params.roomId - Active meeting room ID
- * @param {Function} params.onNotification - Callback to show subtle UI toast messages
+ * @param {Function} [params.onNotification] - Callback to show subtle UI toast messages
  */
 export function useWebRTC({ socket, roomId, onNotification }) {
   const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
-  const [remoteSocketId, setRemoteSocketId] = useState(null);
+  const [remoteStreams, setRemoteStreams] = useState({}); // { [socketId]: MediaStream }
+  const [peerStates, setPeerStates] = useState({}); // { [socketId]: connectionState }
 
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCameraOn, setIsCameraOn] = useState(true);
@@ -21,14 +22,10 @@ export function useWebRTC({ socket, roomId, onNotification }) {
   const [permissionStatus, setPermissionStatus] = useState('prompt'); // 'prompt' | 'granted' | 'denied' | 'unavailable'
   const [permissionError, setPermissionError] = useState(null);
 
-  // WebRTC Peer Connection State
-  const [webrtcState, setWebrtcState] = useState('new'); // 'new' | 'connecting' | 'connected' | 'disconnected' | 'failed' | 'closed'
-
-  // Refs for stable lifecycle management
-  const pcRef = useRef(null);
+  // Refs for stable lifecycle & multi-peer connection management
+  const peerConnectionsRef = useRef(new Map()); // Map<socketId, RTCPeerConnection>
+  const candidateQueuesRef = useRef(new Map()); // Map<socketId, RTCIceCandidateInit[]>
   const localStreamRef = useRef(null);
-  const candidateQueueRef = useRef([]);
-  const remoteSocketIdRef = useRef(null);
 
   /**
    * Request local camera and microphone access
@@ -44,7 +41,7 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         return null;
       }
 
-      console.log('[WebRTC] Requesting local camera and microphone permissions...');
+      console.log('[WebRTC Mesh] Requesting local camera and microphone permissions...');
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
@@ -58,14 +55,14 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         },
       });
 
-      console.log('[WebRTC] Local MediaStream acquired successfully:', stream.id);
+      console.log('[WebRTC Mesh] Local MediaStream acquired successfully:', stream.id);
       localStreamRef.current = stream;
       setLocalStream(stream);
       setPermissionStatus('granted');
       setPermissionError(null);
       return stream;
     } catch (err) {
-      console.warn('[WebRTC] getUserMedia failed:', err.name, err.message);
+      console.warn('[WebRTC Mesh] getUserMedia failed:', err.name, err.message);
 
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setPermissionStatus('denied');
@@ -93,39 +90,65 @@ export function useWebRTC({ socket, roomId, onNotification }) {
   }, [onNotification]);
 
   /**
-   * Create and configure RTCPeerConnection for a remote peer
+   * Process queued ICE candidates for a specific peer
+   */
+  const processCandidateQueue = useCallback(async (targetSocketId, pc) => {
+    const queue = candidateQueuesRef.current.get(targetSocketId) || [];
+    while (queue.length > 0) {
+      const candidate = queue.shift();
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn(`[WebRTC Mesh] Failed to add queued ICE candidate for ${targetSocketId}:`, err);
+      }
+    }
+    candidateQueuesRef.current.set(targetSocketId, []);
+  }, []);
+
+  /**
+   * Create and configure RTCPeerConnection for a specific remote peer in the mesh
    */
   const createPeerConnection = useCallback(
     (targetSocketId) => {
-      // Close any existing connection first
-      if (pcRef.current) {
-        console.log('[WebRTC] Closing previous RTCPeerConnection before creating new one.');
-        pcRef.current.close();
-        pcRef.current = null;
+      // If a connection already exists for this peer, cleanly close it first
+      if (peerConnectionsRef.current.has(targetSocketId)) {
+        console.log(`[WebRTC Mesh] Closing existing RTCPeerConnection for ${targetSocketId} before recreating.`);
+        const oldPc = peerConnectionsRef.current.get(targetSocketId);
+        oldPc.onicecandidate = null;
+        oldPc.ontrack = null;
+        oldPc.onconnectionstatechange = null;
+        oldPc.close();
+        peerConnectionsRef.current.delete(targetSocketId);
       }
 
-      console.log(`[WebRTC] Initializing new RTCPeerConnection for target peer: ${targetSocketId}`);
+      console.log(`[WebRTC Mesh] Initializing new RTCPeerConnection for peer: ${targetSocketId}`);
       const pc = new RTCPeerConnection(rtcConfig);
-      pcRef.current = pc;
-      remoteSocketIdRef.current = targetSocketId;
-      setRemoteSocketId(targetSocketId);
-      candidateQueueRef.current = [];
+      peerConnectionsRef.current.set(targetSocketId, pc);
+
+      if (!candidateQueuesRef.current.has(targetSocketId)) {
+        candidateQueuesRef.current.set(targetSocketId, []);
+      }
+
+      setPeerStates((prev) => ({ ...prev, [targetSocketId]: 'connecting' }));
 
       // Add local media tracks to peer connection
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => {
-          console.log(`[WebRTC] Adding local ${track.kind} track to RTCPeerConnection`);
+          console.log(`[WebRTC Mesh] Adding local ${track.kind} track to peer ${targetSocketId}`);
           pc.addTrack(track, localStreamRef.current);
         });
       }
 
       // Handle incoming remote media tracks
       pc.ontrack = (event) => {
-        console.log('[WebRTC] Remote media track received on peerConnection:', event.track.kind);
+        console.log(`[WebRTC Mesh] Remote track (${event.track.kind}) received from peer: ${targetSocketId}`);
         const [incomingStream] = event.streams;
         if (incomingStream) {
-          console.log('[WebRTC] Remote MediaStream attached:', incomingStream.id);
-          setRemoteStream(incomingStream);
+          console.log(`[WebRTC Mesh] Remote MediaStream attached for peer: ${targetSocketId} (stream: ${incomingStream.id})`);
+          setRemoteStreams((prev) => ({
+            ...prev,
+            [targetSocketId]: incomingStream,
+          }));
         }
       };
 
@@ -143,49 +166,41 @@ export function useWebRTC({ socket, roomId, onNotification }) {
       // Handle Connection State changes
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
-        console.log(`[WebRTC] Connection state changed: ${state}`);
-        setWebrtcState(state);
+        console.log(`[WebRTC Mesh] Peer ${targetSocketId} connection state changed: ${state}`);
+        setPeerStates((prev) => ({
+          ...prev,
+          [targetSocketId]: state,
+        }));
 
-        if (state === 'connected') {
-          if (onNotification) {
-            onNotification('1-to-1 WebRTC video call connected');
-          }
-        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-          setRemoteStream(null);
+        if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+          // Remove remote stream if disconnected
+          setRemoteStreams((prev) => {
+            const updated = { ...prev };
+            delete updated[targetSocketId];
+            return updated;
+          });
         }
       };
 
       // Handle ICE Connection State changes
       pc.oniceconnectionstatechange = () => {
-        console.log(`[WebRTC] ICE connection state: ${pc.iceConnectionState}`);
+        console.log(`[WebRTC Mesh] Peer ${targetSocketId} ICE state: ${pc.iceConnectionState}`);
       };
 
       return pc;
     },
-    [socket, roomId, onNotification]
+    [socket, roomId]
   );
 
   /**
-   * Process queued ICE candidates after remote description is set
-   */
-  const processCandidateQueue = async (pc) => {
-    while (candidateQueueRef.current.length > 0) {
-      const candidate = candidateQueueRef.current.shift();
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.warn('[WebRTC] Failed to add queued ICE candidate:', err);
-      }
-    }
-  };
-
-  /**
-   * Initiator: Create and send WebRTC Offer to target peer
+   * Deterministic Offer: Existing participant initiates WebRTC Offer to a newly joined peer
    */
   const initiateOffer = useCallback(
     async (targetSocketId) => {
+      if (!targetSocketId) return;
+
       try {
-        console.log(`[WebRTC] Creating offer for peer ${targetSocketId}...`);
+        console.log(`[WebRTC Mesh] Initiating WebRTC offer to peer: ${targetSocketId}`);
         const pc = createPeerConnection(targetSocketId);
 
         const offer = await pc.createOffer({
@@ -194,7 +209,7 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         });
 
         await pc.setLocalDescription(offer);
-        console.log('[WebRTC] Local description (offer) set, sending via Socket.io');
+        console.log(`[WebRTC Mesh] Local offer description set for peer ${targetSocketId}, relaying via Socket.io`);
 
         socket.emit('webrtc-offer', {
           targetSocketId,
@@ -202,29 +217,31 @@ export function useWebRTC({ socket, roomId, onNotification }) {
           roomId,
         });
       } catch (err) {
-        console.error('[WebRTC] Failed to initiate offer:', err);
+        console.error(`[WebRTC Mesh] Failed to initiate offer to peer ${targetSocketId}:`, err);
       }
     },
     [createPeerConnection, socket, roomId]
   );
 
   /**
-   * Responder: Receive Offer, set remote description, create and send Answer
+   * Responder: Receive Offer from an existing participant, create and send Answer
    */
   const handleReceiveOffer = useCallback(
     async ({ senderSocketId, offer }) => {
+      if (!senderSocketId || !offer) return;
+
       try {
-        console.log(`[WebRTC] Handling received offer from peer ${senderSocketId}...`);
+        console.log(`[WebRTC Mesh] Handling received offer from peer: ${senderSocketId}`);
         const pc = createPeerConnection(senderSocketId);
 
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        console.log('[WebRTC] Remote description (offer) set successfully');
+        console.log(`[WebRTC Mesh] Remote description (offer) set for peer ${senderSocketId}`);
 
-        await processCandidateQueue(pc);
+        await processCandidateQueue(senderSocketId, pc);
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        console.log('[WebRTC] Local description (answer) set, sending via Socket.io');
+        console.log(`[WebRTC Mesh] Local answer description set for peer ${senderSocketId}, relaying via Socket.io`);
 
         socket.emit('webrtc-answer', {
           targetSocketId: senderSocketId,
@@ -232,49 +249,89 @@ export function useWebRTC({ socket, roomId, onNotification }) {
           roomId,
         });
       } catch (err) {
-        console.error('[WebRTC] Failed to handle received offer:', err);
+        console.error(`[WebRTC Mesh] Failed to handle received offer from peer ${senderSocketId}:`, err);
       }
     },
-    [createPeerConnection, socket, roomId]
+    [createPeerConnection, processCandidateQueue, socket, roomId]
   );
 
   /**
-   * Initiator: Receive Answer and set remote description
+   * Initiator: Receive Answer from responder and set remote description
    */
-  const handleReceiveAnswer = useCallback(async ({ senderSocketId, answer }) => {
-    try {
-      console.log(`[WebRTC] Handling received answer from peer ${senderSocketId}...`);
-      const pc = pcRef.current;
-      if (!pc) {
-        console.warn('[WebRTC] No active RTCPeerConnection found for answer');
-        return;
+  const handleReceiveAnswer = useCallback(
+    async ({ senderSocketId, answer }) => {
+      if (!senderSocketId || !answer) return;
+
+      try {
+        console.log(`[WebRTC Mesh] Handling received answer from peer: ${senderSocketId}`);
+        const pc = peerConnectionsRef.current.get(senderSocketId);
+        if (!pc) {
+          console.warn(`[WebRTC Mesh] No active RTCPeerConnection found for answer from ${senderSocketId}`);
+          return;
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        console.log(`[WebRTC Mesh] Remote description (answer) set for peer ${senderSocketId}`);
+
+        await processCandidateQueue(senderSocketId, pc);
+      } catch (err) {
+        console.error(`[WebRTC Mesh] Failed to handle received answer from peer ${senderSocketId}:`, err);
       }
-
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      console.log('[WebRTC] Remote description (answer) set successfully');
-
-      await processCandidateQueue(pc);
-    } catch (err) {
-      console.error('[WebRTC] Failed to handle received answer:', err);
-    }
-  }, []);
+    },
+    [processCandidateQueue]
+  );
 
   /**
-   * Receive and add ICE Candidate
+   * Receive and route ICE Candidate to the appropriate peer connection
    */
-  const handleReceiveIceCandidate = useCallback(async ({ candidate }) => {
-    const pc = pcRef.current;
+  const handleReceiveIceCandidate = useCallback(async ({ senderSocketId, candidate }) => {
+    if (!senderSocketId || !candidate) return;
+
+    const pc = peerConnectionsRef.current.get(senderSocketId);
     if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
       // Queue candidate until remote description is set
-      candidateQueueRef.current.push(candidate);
+      const queue = candidateQueuesRef.current.get(senderSocketId) || [];
+      queue.push(candidate);
+      candidateQueuesRef.current.set(senderSocketId, queue);
       return;
     }
 
     try {
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (err) {
-      console.warn('[WebRTC] Failed to add ICE candidate:', err);
+      console.warn(`[WebRTC Mesh] Failed to add ICE candidate for peer ${senderSocketId}:`, err);
     }
+  }, []);
+
+  /**
+   * Cleanly close and remove a single peer connection (e.g. when participant leaves)
+   */
+  const closePeerConnection = useCallback((targetSocketId) => {
+    if (!targetSocketId) return;
+    console.log(`[WebRTC Mesh] Cleaning up peer connection for left peer: ${targetSocketId}`);
+
+    const pc = peerConnectionsRef.current.get(targetSocketId);
+    if (pc) {
+      pc.onicecandidate = null;
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.close();
+      peerConnectionsRef.current.delete(targetSocketId);
+    }
+
+    candidateQueuesRef.current.delete(targetSocketId);
+
+    setRemoteStreams((prev) => {
+      const updated = { ...prev };
+      delete updated[targetSocketId];
+      return updated;
+    });
+
+    setPeerStates((prev) => {
+      const updated = { ...prev };
+      delete updated[targetSocketId];
+      return updated;
+    });
   }, []);
 
   /**
@@ -336,35 +393,35 @@ export function useWebRTC({ socket, roomId, onNotification }) {
   }, [isCameraOn, isMicOn, socket, roomId]);
 
   /**
-   * Clean up WebRTC peer connections and local media streams
+   * Clean up all WebRTC peer connections and local media tracks
    */
   const cleanup = useCallback(() => {
-    console.log('[WebRTC] Executing complete WebRTC cleanup...');
+    console.log('[WebRTC Mesh] Executing complete WebRTC cleanup for all mesh peers...');
 
     // Stop all local tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
-        console.log(`[WebRTC] Stopping local ${track.kind} track`);
+        console.log(`[WebRTC Mesh] Stopping local ${track.kind} track`);
         track.stop();
       });
       localStreamRef.current = null;
     }
 
-    // Close peer connection
-    if (pcRef.current) {
-      pcRef.current.onicecandidate = null;
-      pcRef.current.ontrack = null;
-      pcRef.current.onconnectionstatechange = null;
-      pcRef.current.close();
-      pcRef.current = null;
-    }
+    // Close all peer connections
+    peerConnectionsRef.current.forEach((pc, socketId) => {
+      console.log(`[WebRTC Mesh] Closing peer connection for: ${socketId}`);
+      pc.onicecandidate = null;
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.close();
+    });
 
-    candidateQueueRef.current = [];
-    remoteSocketIdRef.current = null;
+    peerConnectionsRef.current.clear();
+    candidateQueuesRef.current.clear();
+
     setLocalStream(null);
-    setRemoteStream(null);
-    setRemoteSocketId(null);
-    setWebrtcState('closed');
+    setRemoteStreams({});
+    setPeerStates({});
   }, []);
 
   // Initialize local media on mount
@@ -393,14 +450,14 @@ export function useWebRTC({ socket, roomId, onNotification }) {
 
   return {
     localStream,
-    remoteStream,
-    remoteSocketId,
+    remoteStreams,
+    peerStates,
     isMicOn,
     isCameraOn,
     permissionStatus,
     permissionError,
-    webrtcState,
     initiateOffer,
+    closePeerConnection,
     toggleMic,
     toggleCamera,
     cleanup,

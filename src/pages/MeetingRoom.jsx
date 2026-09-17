@@ -44,12 +44,14 @@ export default function MeetingRoom() {
   const [participants, setParticipants] = useState(() => [
     {
       id: user?.id || 'usr_local',
+      userId: user?.id,
       socketId: 'local_pending',
-      name: user?.name ? `${user.name} (You)` : 'You',
+      name: user?.name || 'You',
+      email: user?.email || '',
       initials: userInitials,
       avatar: user?.avatar || '',
-      role: 'Host',
-      isHost: true,
+      role: 'Participant',
+      isHost: false,
       isSelf: true,
       isMicOn: true,
       isCameraOn: true,
@@ -61,6 +63,34 @@ export default function MeetingRoom() {
   const [socketConnectionStatus, setSocketConnectionStatus] = useState('connecting');
   const [notification, setNotification] = useState(null);
   const [hasUnreadChat, setHasUnreadChat] = useState(false);
+
+  // Sync authenticated user context into local participant entry if updated
+  useEffect(() => {
+    if (!user) return;
+    setParticipants((prev) =>
+      prev.map((p) => {
+        if (p.isSelf && (p.socketId === 'local_pending' || !p.name || p.name === 'You')) {
+          return {
+            ...p,
+            id: user.id || p.id,
+            userId: user.id || p.userId,
+            name: user.name || p.name,
+            email: user.email || p.email,
+            avatar: user.avatar || p.avatar,
+            initials: user.name
+              ? user.name
+                  .split(' ')
+                  .map((n) => n[0])
+                  .slice(0, 2)
+                  .join('')
+                  .toUpperCase()
+              : p.initials,
+          };
+        }
+        return p;
+      })
+    );
+  }, [user]);
 
   // Modals and Drawers
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
@@ -87,17 +117,18 @@ export default function MeetingRoom() {
     }, 4000);
   }, []);
 
-  // WebRTC Hook for 1-to-1 Audio & Video
+  // WebRTC Hook for Multi-Peer Mesh Audio & Video (3-6 participants)
   const cleanRoomId = (roomId || '').trim().toUpperCase();
   const {
     localStream,
-    remoteStream,
+    remoteStreams,
+    peerStates,
     isMicOn,
     isCameraOn,
     permissionStatus,
     permissionError,
-    webrtcState,
     initiateOffer,
+    closePeerConnection,
     toggleMic,
     toggleCamera,
     cleanup: cleanupWebRTC,
@@ -159,12 +190,19 @@ export default function MeetingRoom() {
       setParticipants(
         roomUsers.map((p) => {
           const isSelf = p.socketId === socket.id;
+          const displayName = isSelf && user?.name ? user.name : (p.name || 'Participant');
           return {
             ...p,
-            name: isSelf && user?.name ? `${user.name} (You)` : p.name,
+            id: p.userId || p.id,
+            userId: p.userId || p.id,
+            name: displayName,
+            email: isSelf && user?.email ? user.email : p.email,
+            avatar: isSelf && user?.avatar ? user.avatar : p.avatar,
+            role: p.role || (p.isHost ? 'Host' : 'Participant'),
+            isHost: Boolean(p.isHost),
             isSelf,
-            initials: p.name
-              ? p.name
+            initials: displayName
+              ? displayName
                   .split(' ')
                   .map((n) => n[0])
                   .slice(0, 2)
@@ -173,6 +211,7 @@ export default function MeetingRoom() {
               : 'U',
             isMicOn: isSelf ? isMicOn : (p.isMicOn ?? true),
             isCameraOn: isSelf ? isCameraOn : (p.isCameraOn ?? true),
+            isSpeaking: false,
           };
         })
       );
@@ -181,15 +220,43 @@ export default function MeetingRoom() {
     // Another participant joined the room -> existing user initiates WebRTC offer
     socket.on('participant-joined', ({ participant }) => {
       console.log('[MeetingRoom] Participant joined room:', participant);
+      if (participant.socketId === socket.id) return;
+
       setParticipants((prev) => {
         const exists = prev.some((p) => p.socketId === participant.socketId);
-        if (exists) return prev;
+        if (exists) {
+          return prev.map((p) =>
+            p.socketId === participant.socketId
+              ? {
+                  ...p,
+                  ...participant,
+                  id: participant.userId || participant.id,
+                  userId: participant.userId || participant.id,
+                  name: participant.name,
+                  isSelf: false,
+                  initials: participant.name
+                    ? participant.name
+                        .split(' ')
+                        .map((n) => n[0])
+                        .slice(0, 2)
+                        .join('')
+                        .toUpperCase()
+                    : 'U',
+                }
+              : p
+          );
+        }
 
-        const isSelf = participant.socketId === socket.id;
         const newEntry = {
           ...participant,
-          name: isSelf && user?.name ? `${user.name} (You)` : participant.name,
-          isSelf,
+          id: participant.userId || participant.id,
+          userId: participant.userId || participant.id,
+          name: participant.name,
+          email: participant.email || '',
+          avatar: participant.avatar || '',
+          role: participant.role || (participant.isHost ? 'Host' : 'Participant'),
+          isHost: Boolean(participant.isHost),
+          isSelf: false,
           initials: participant.name
             ? participant.name
                 .split(' ')
@@ -198,6 +265,9 @@ export default function MeetingRoom() {
                 .join('')
                 .toUpperCase()
             : 'U',
+          isMicOn: participant.isMicOn ?? true,
+          isCameraOn: participant.isCameraOn ?? true,
+          isSpeaking: false,
         };
         return [...prev, newEntry];
       });
@@ -205,15 +275,14 @@ export default function MeetingRoom() {
       showNotification(`${participant.name} joined the meeting`);
 
       // Deterministic WebRTC negotiation: Existing participant initiates the offer to the newly joined peer
-      if (participant.socketId !== socket.id) {
-        console.log(`[MeetingRoom] Initiating WebRTC offer to new participant: ${participant.socketId}`);
-        initiateOffer(participant.socketId);
-      }
+      console.log(`[MeetingRoom] Initiating WebRTC mesh offer to new participant: ${participant.socketId}`);
+      initiateOffer(participant.socketId);
     });
 
-    // A participant left the room
+    // A participant left the room -> clean up their peer connection and remove tile
     socket.on('participant-left', ({ socketId, userName }) => {
       console.log(`[MeetingRoom] Participant left (${socketId}): ${userName}`);
+      closePeerConnection(socketId);
       setParticipants((prev) => prev.filter((p) => p.socketId !== socketId));
       if (userName) {
         showNotification(`${userName} left the meeting`);
@@ -239,7 +308,7 @@ export default function MeetingRoom() {
     // Real-time chat message broadcast received
     socket.on('receive-message', (msg) => {
       console.log('[MeetingRoom] Received chat message:', msg);
-      const isSelf = msg.userId === user?.id;
+      const isSelf = msg.userId === user?.id || (socketRef.current && msg.socketId === socketRef.current.id);
 
       setMessages((prev) => {
         if (prev.some((m) => m.id === msg.id)) return prev;
@@ -248,7 +317,7 @@ export default function MeetingRoom() {
           ...prev,
           {
             ...msg,
-            sender: isSelf ? 'You' : msg.userName,
+            sender: isSelf ? `${msg.userName} (You)` : msg.userName,
             initials: msg.userName
               ? msg.userName
                   .split(' ')
@@ -285,7 +354,7 @@ export default function MeetingRoom() {
       socketRef.current = null;
       setActiveSocket(null);
     };
-  }, [cleanRoomId, token, user?.id, initiateOffer, showNotification, isChatOpen]);
+  }, [cleanRoomId, token, user?.id, user?.name, user?.email, user?.avatar, initiateOffer, closePeerConnection, showNotification, isChatOpen]);
 
   // Keep self participant media state in sync with useWebRTC hook
   useEffect(() => {
@@ -348,11 +417,12 @@ export default function MeetingRoom() {
   };
 
   // Combined connection status for header
+  const remotePeerCount = Object.keys(remoteStreams).length;
   const headerConnectionStatus =
-    webrtcState === 'connected'
-      ? 'connected'
-      : socketConnectionStatus === 'connected'
-      ? 'connected'
+    socketConnectionStatus === 'connected'
+      ? remotePeerCount > 0
+        ? 'connected'
+        : 'connected'
       : socketConnectionStatus;
 
   return (
@@ -397,12 +467,13 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      {/* Main Video Grid Area with Real WebRTC Streams */}
+      {/* Main Video Grid Area with Real WebRTC Mesh Streams */}
       <div className="flex-1 flex min-h-0 relative overflow-hidden">
         <VideoGrid
           participants={participants}
           localStream={localStream}
-          remoteStream={remoteStream}
+          remoteStreams={remoteStreams}
+          peerStates={peerStates}
         />
 
         {/* Slide-out Participant Panel */}
@@ -511,8 +582,17 @@ export default function MeetingRoom() {
             </div>
           </div>
 
-          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-500">
-            WebRTC 1-to-1 Connection State: <code className="text-brand-600 font-semibold">{webrtcState}</code>
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-600 space-y-1">
+            <div className="font-semibold text-slate-800">WebRTC Mesh Status</div>
+            <div className="text-[11px]">
+              Active Peer Connections: <span className="font-mono text-brand-600 font-bold">{remotePeerCount}</span>
+            </div>
+            {Object.entries(peerStates).map(([pSocketId, state]) => (
+              <div key={pSocketId} className="text-[10px] font-mono text-slate-500 flex justify-between">
+                <span>{pSocketId.substring(0, 10)}...</span>
+                <span className="capitalize font-semibold text-slate-700">{state}</span>
+              </div>
+            ))}
           </div>
 
           <div className="flex justify-end pt-2">

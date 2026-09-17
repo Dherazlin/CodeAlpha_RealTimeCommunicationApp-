@@ -1,8 +1,13 @@
 import React, { useEffect, useRef } from 'react';
-import { Mic, MicOff, VideoOff, Crown } from 'lucide-react';
+import { Mic, MicOff, VideoOff, Crown, WifiOff, Loader2 } from 'lucide-react';
 import Avatar from '../common/Avatar';
 
-export default function VideoTile({ participant, stream, isSelf = false }) {
+export default function VideoTile({
+  participant,
+  stream,
+  peerState = 'connected',
+  isSelf = false,
+}) {
   const { name, avatar, initials, isHost, isMicOn, isCameraOn, isSpeaking } = participant;
   const videoRef = useRef(null);
 
@@ -12,7 +17,9 @@ export default function VideoTile({ participant, stream, isSelf = false }) {
     }
   }, [stream, isCameraOn]);
 
-  const hasVideoStream = Boolean(stream && stream.getVideoTracks && stream.getVideoTracks().length > 0);
+  const hasVideoStream = Boolean(
+    stream && stream.getVideoTracks && stream.getVideoTracks().length > 0 && isCameraOn
+  );
 
   return (
     <div
@@ -80,6 +87,21 @@ export default function VideoTile({ participant, stream, isSelf = false }) {
         </div>
       )}
 
+      {/* Connection State Badge (if not self and not fully connected) */}
+      {!isSelf && (peerState === 'failed' || peerState === 'disconnected') && (
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/90 text-white text-[10px] font-medium backdrop-blur-xs shadow-sm">
+          <WifiOff className="w-3 h-3" />
+          <span>Connection lost</span>
+        </div>
+      )}
+
+      {!isSelf && peerState === 'connecting' && (
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/80 text-white text-[10px] font-medium backdrop-blur-xs shadow-sm">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          <span>Connecting...</span>
+        </div>
+      )}
+
       {/* Top Right Controls / Host Tag */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
         {isHost && (
@@ -93,7 +115,13 @@ export default function VideoTile({ participant, stream, isSelf = false }) {
       {/* Bottom Info Bar: Name + Mic Status */}
       <div className="absolute bottom-3 left-3 right-3 z-10 flex items-center justify-between pointer-events-none">
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950/80 backdrop-blur-md border border-slate-800 text-white text-xs font-medium shadow-sm max-w-[85%]">
-          <span className="truncate">{isSelf ? `${name} (You)` : name}</span>
+          <span className="truncate">
+            {isSelf
+              ? name.endsWith('(You)')
+                ? name
+                : `${name} (You)`
+              : name.replace(/\s*\(You\)$/, '')}
+          </span>
         </div>
 
         <div

@@ -6,6 +6,7 @@ import User from '../models/User.js';
  * Map<roomId, Map<socketId, participant>>
  */
 const rooms = new Map();
+const MAX_PARTICIPANTS = 6;
 
 /**
  * Configure and initialize Socket.io handlers
@@ -37,6 +38,7 @@ export function setupSocketHandlers(io) {
       // Attach authenticated user information to socket
       socket.user = {
         id: user._id.toString(),
+        userId: user._id.toString(),
         name: user.name,
         email: user.email,
         avatar: user.avatar || '',
@@ -74,21 +76,34 @@ export function setupSocketHandlers(io) {
         leaveRoomHandler(currentRoomId);
       }
 
-      currentRoomId = cleanRoomId;
-      socket.join(cleanRoomId);
-
       if (!rooms.has(cleanRoomId)) {
         rooms.set(cleanRoomId, new Map());
       }
 
       const roomParticipants = rooms.get(cleanRoomId);
+
+      // Check participant limit (3-6 supported mesh participants)
+      if (roomParticipants.size >= MAX_PARTICIPANTS && !roomParticipants.has(socket.id)) {
+        console.warn(
+          `[Socket.io] Room ${cleanRoomId} is full (${roomParticipants.size}/${MAX_PARTICIPANTS}). Rejecting user ${socket.user.name}.`
+        );
+        socket.emit('error-message', {
+          message: `This meeting has reached its participant limit (maximum ${MAX_PARTICIPANTS} participants).`,
+        });
+        return;
+      }
+
+      currentRoomId = cleanRoomId;
+      socket.join(cleanRoomId);
       const isHost = roomParticipants.size === 0;
 
-      // Participant representation adhering to Phase 3 & 4 requirements
+      // Participant representation adhering to Phase 3, 4 & 5 requirements
       const participant = {
         socketId: socket.id,
+        userId: socket.user.id,
         id: socket.user.id,
         name: socket.user.name,
+        email: socket.user.email,
         avatar: socket.user.avatar,
         role: isHost ? 'Host' : socket.user.role || 'Participant',
         isHost,
@@ -100,7 +115,7 @@ export function setupSocketHandlers(io) {
       roomParticipants.set(socket.id, participant);
 
       console.log(
-        `[Socket.io] User "${socket.user.name}" joined room "${cleanRoomId}". Total in room: ${roomParticipants.size}`
+        `[Socket.io] User "${socket.user.name}" joined room "${cleanRoomId}" as ${participant.role}. Total in room: ${roomParticipants.size}`
       );
 
       // Send the current list of participants to the joining user
@@ -241,7 +256,7 @@ export function setupSocketHandlers(io) {
     /**
      * Helper to handle leaving a room
      */
-    const leaveRoomHandler = (roomIdToLeave) => {
+     const leaveRoomHandler = (roomIdToLeave) => {
       if (!roomIdToLeave) return;
       const cleanRoomId = roomIdToLeave.trim().toUpperCase();
 
@@ -249,11 +264,24 @@ export function setupSocketHandlers(io) {
         const roomParticipants = rooms.get(cleanRoomId);
         if (roomParticipants.has(socket.id)) {
           const departingUser = roomParticipants.get(socket.id);
+          const wasHost = departingUser?.isHost;
           roomParticipants.delete(socket.id);
 
           console.log(
             `[Socket.io] User "${socket.user?.name}" left room "${cleanRoomId}". Remaining in room: ${roomParticipants.size}`
           );
+
+          // If departing participant was host, pass host role to first remaining participant
+          if (wasHost && roomParticipants.size > 0) {
+            const firstRemaining = roomParticipants.values().next().value;
+            if (firstRemaining) {
+              firstRemaining.isHost = true;
+              firstRemaining.role = 'Host';
+              console.log(
+                `[Socket.io] Reassigned Host role to "${firstRemaining.name}" in room "${cleanRoomId}"`
+              );
+            }
+          }
 
           // Broadcast to remaining users
           socket.to(cleanRoomId).emit('participant-left', {

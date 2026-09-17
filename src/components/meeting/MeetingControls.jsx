@@ -18,7 +18,7 @@ export default function MeetingControls({
   onToggleCamera,
   isParticipantsOpen,
   onToggleParticipants,
-  participantCount = 4,
+  participantCount = 1,
   isChatOpen,
   onToggleChat,
   hasUnreadChat = false,
