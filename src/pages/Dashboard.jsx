@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Video,
@@ -13,6 +13,8 @@ import {
   FolderOpen,
   Settings,
   HelpCircle,
+  Radio,
+  RefreshCw,
 } from 'lucide-react';
 import Sidebar from '../components/layout/Sidebar';
 import Header from '../components/layout/Header';
@@ -22,11 +24,8 @@ import ActivityItem from '../components/dashboard/ActivityItem';
 import EmptyState from '../components/common/EmptyState';
 import Button from '../components/common/Button';
 import { useAuth } from '../context/AuthContext';
-import {
-  upcomingMeetings as initialUpcoming,
-  recentMeetings as initialRecent,
-  recentActivities,
-} from '../data/mockData';
+import { meetingApi } from '../utils/api';
+import { recentActivities } from '../data/mockData';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -36,25 +35,83 @@ export default function Dashboard() {
   const [meetingView, setMeetingView] = useState('upcoming'); // 'upcoming' | 'recent'
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Meeting states from MongoDB
+  const [liveMeetings, setLiveMeetings] = useState([]);
+  const [myMeetings, setMyMeetings] = useState([]);
+  const [loadingMeetings, setLoadingMeetings] = useState(true);
+
+  // Fetch meetings from API
+  const loadDashboardData = useCallback(async () => {
+    try {
+      setLoadingMeetings(true);
+      const [liveRes, myRes] = await Promise.all([
+        meetingApi.getLiveMeetings().catch(() => ({ success: false, meetings: [] })),
+        meetingApi.getMyMeetings().catch(() => ({ success: false, meetings: [] })),
+      ]);
+
+      if (liveRes.success && Array.isArray(liveRes.meetings)) {
+        setLiveMeetings(liveRes.meetings);
+      }
+      if (myRes.success && Array.isArray(myRes.meetings)) {
+        setMyMeetings(myRes.meetings);
+      }
+    } catch (err) {
+      console.error('[Dashboard] Error loading meetings:', err);
+    } finally {
+      setLoadingMeetings(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDashboardData();
+    // Poll live meetings periodically (every 10 seconds)
+    const interval = setInterval(loadDashboardData, 10000);
+    return () => clearInterval(interval);
+  }, [loadDashboardData]);
+
+  // If sidebar navigates to 'recent', automatically select recent history view
+  useEffect(() => {
+    if (activeTab === 'recent') {
+      setMeetingView('recent');
+    } else if (activeTab === 'meetings') {
+      setMeetingView('upcoming');
+    }
+  }, [activeTab]);
+
   // Determine dynamic greeting & user display name
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const firstName = user?.name ? user.name.split(' ')[0] : 'User';
 
+  // Filter live meetings
+  const filteredLive = liveMeetings.filter((m) => {
+    const q = searchQuery.toLowerCase();
+    const roomId = (m.roomId || m.id || '').toLowerCase();
+    const title = (m.title || '').toLowerCase();
+    const desc = (m.description || '').toLowerCase();
+    const host = (m.host?.name || '').toLowerCase();
+    return title.includes(q) || roomId.includes(q) || desc.includes(q) || host.includes(q);
+  });
 
-  // Filter meetings based on search
-  const filteredUpcoming = initialUpcoming.filter(
-    (m) =>
-      m.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (m.description && m.description.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  // Filter user's upcoming/active meetings
+  const myActiveMeetings = myMeetings.filter((m) => m.status === 'live');
+  const myPastMeetings = myMeetings.filter((m) => m.status === 'ended');
 
-  const filteredRecent = initialRecent.filter(
-    (m) =>
-      m.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredUpcoming = myActiveMeetings.filter((m) => {
+    const q = searchQuery.toLowerCase();
+    const roomId = (m.roomId || m.id || '').toLowerCase();
+    const title = (m.title || '').toLowerCase();
+    const desc = (m.description || '').toLowerCase();
+    return title.includes(q) || roomId.includes(q) || desc.includes(q);
+  });
+
+  const filteredRecent = myPastMeetings.filter((m) => {
+    const q = searchQuery.toLowerCase();
+    const roomId = (m.roomId || m.id || '').toLowerCase();
+    const title = (m.title || '').toLowerCase();
+    const desc = (m.description || '').toLowerCase();
+    return title.includes(q) || roomId.includes(q) || desc.includes(q);
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
@@ -124,6 +181,49 @@ export default function Dashboard() {
             />
           </section>
 
+          {/* Prominent Live Meetings Section */}
+          <section aria-label="Live Meetings" className="space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                </span>
+                <h2 className="text-sm font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                  <span>Live Meetings</span>
+                  <span className="text-[10px] bg-rose-50 border border-rose-200 text-rose-700 px-2 py-0.5 rounded-full font-semibold">
+                    {filteredLive.length} active
+                  </span>
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={loadDashboardData}
+                className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 transition-colors"
+                title="Refresh meetings"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingMeetings ? 'animate-spin text-brand-600' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+            </div>
+
+            {filteredLive.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200/80 p-5 text-center shadow-subtle">
+                <div className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-200/60 text-slate-400 flex items-center justify-center mx-auto mb-2">
+                  <Radio className="w-4 h-4" />
+                </div>
+                <p className="text-xs font-semibold text-slate-700">No active live meetings right now</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Click "New Meeting" above to launch an instant persistent room.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredLive.map((meeting) => (
+                  <MeetingCard key={meeting.roomId || meeting._id || meeting.id} meeting={meeting} />
+                ))}
+              </div>
+            )}
+          </section>
+
           {/* Active Tab Views */}
           {activeTab === 'files' ? (
             <div className="bg-white rounded-2xl border border-slate-200/90 p-8">
@@ -168,7 +268,7 @@ export default function Dashboard() {
                       aria-pressed={meetingView === 'upcoming'}
                     >
                       <Calendar className="w-3.5 h-3.5" />
-                      <span>Upcoming Meetings</span>
+                      <span>My Active Meetings</span>
                       <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
                         meetingView === 'upcoming' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
                       }`}>
@@ -187,7 +287,7 @@ export default function Dashboard() {
                       aria-pressed={meetingView === 'recent'}
                     >
                       <Clock className="w-3.5 h-3.5" />
-                      <span>Recent History</span>
+                      <span>Meeting History</span>
                       <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
                         meetingView === 'recent' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
                       }`}>
@@ -202,13 +302,13 @@ export default function Dashboard() {
                   filteredUpcoming.length === 0 ? (
                     <EmptyState
                       icon={Calendar}
-                      title={searchQuery ? 'No matching meetings' : 'No upcoming meetings scheduled'}
+                      title={searchQuery ? 'No matching meetings' : 'No active meetings scheduled'}
                       description={
                         searchQuery
                           ? `No meetings matching "${searchQuery}". Try a different search term.`
-                          : 'You are all caught up! Create a new meeting to collaborate with your team.'
+                          : 'You have no active calls right now. Create a new meeting or join a live room.'
                       }
-                      actionLabel={searchQuery ? 'Clear Search' : 'Schedule Meeting'}
+                      actionLabel={searchQuery ? 'Clear Search' : 'Start a Meeting'}
                       actionIcon={searchQuery ? undefined : Plus}
                       onAction={() => (searchQuery ? setSearchQuery('') : navigate('/meeting/new'))}
                       className="bg-white"
@@ -216,7 +316,7 @@ export default function Dashboard() {
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {filteredUpcoming.map((meeting) => (
-                        <MeetingCard key={meeting.id} meeting={meeting} />
+                        <MeetingCard key={meeting.roomId || meeting._id || meeting.id} meeting={meeting} />
                       ))}
                     </div>
                   )
@@ -224,11 +324,11 @@ export default function Dashboard() {
                   filteredRecent.length === 0 ? (
                     <EmptyState
                       icon={Clock}
-                      title={searchQuery ? 'No matching history' : 'No recent meetings found'}
+                      title={searchQuery ? 'No matching history' : 'No past meetings found'}
                       description={
                         searchQuery
-                          ? `No recent calls matching "${searchQuery}".`
-                          : 'Your past video sessions will be logged here for easy reference.'
+                          ? `No past calls matching "${searchQuery}".`
+                          : 'Meetings you create or participate in will be logged here permanently.'
                       }
                       actionLabel={searchQuery ? 'Clear Search' : 'Start a Meeting'}
                       actionIcon={searchQuery ? undefined : Video}
@@ -238,7 +338,7 @@ export default function Dashboard() {
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {filteredRecent.map((meeting) => (
-                        <MeetingCard key={meeting.id} meeting={meeting} isRecent />
+                        <MeetingCard key={meeting.roomId || meeting._id || meeting.id} meeting={meeting} isRecent />
                       ))}
                     </div>
                   )

@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { Server } from 'socket.io';
 import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
+import meetingRoutes from './routes/meetingRoutes.js';
 import { setupSocketHandlers } from './socket/socketHandler.js';
 
 // Load environment variables
@@ -50,8 +51,9 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Authentication Routes
+// API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/meetings', meetingRoutes);
 
 // 404 Route Handler
 app.use((req, res) => {

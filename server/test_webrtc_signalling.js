@@ -33,8 +33,21 @@ async function runWebRTCSignallingTests() {
 
   console.log('  ✓ Alice token:', Boolean(reg1.token), '| Bob token:', Boolean(reg2.token));
 
-  const roomId = `KOR-W${Math.floor(1000 + Math.random() * 9000)}`;
-  console.log(`\n[3/6] Connecting Alice and Bob to room "${roomId}"...`);
+  // Create meeting in MongoDB Atlas as Alice
+  const meetingRes = await fetch(`${API_URL}/meetings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${reg1.token}`,
+    },
+    body: JSON.stringify({
+      title: 'WebRTC Signalling Test Meeting',
+      category: 'general',
+    }),
+  });
+  const meetingData = await meetingRes.json();
+  const roomId = meetingData.meeting.roomId;
+  console.log(`\n[3/6] Created meeting "${roomId}" in MongoDB. Connecting Alice and Bob...`);
 
   // Step 3: Connect Alice and Bob sockets
   const socketAlice = io(SOCKET_URL, {

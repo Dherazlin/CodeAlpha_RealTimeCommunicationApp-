@@ -37,8 +37,21 @@ async function runMultiUserWebRTCTests() {
   }
   console.log('  ✓ Registered 4 participants successfully with valid JWT tokens');
 
-  const roomId = `KOR-MESH${Math.floor(1000 + Math.random() * 9000)}`;
-  console.log(`\n[3/10] Connecting Alice (initiator / host) to room "${roomId}"...`);
+  // Create meeting in MongoDB Atlas as Alice
+  const meetingRes = await fetch(`${API_URL}/meetings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${tokens[0]}`,
+    },
+    body: JSON.stringify({
+      title: 'Multiuser WebRTC Mesh Test Meeting',
+      category: 'general',
+    }),
+  });
+  const meetingData = await meetingRes.json();
+  const roomId = meetingData.meeting.roomId;
+  console.log(`\n[3/10] Created meeting "${roomId}" in MongoDB. Connecting Alice (host)...`);
 
   // Alice connects
   const socketAlice = io(SOCKET_URL, {

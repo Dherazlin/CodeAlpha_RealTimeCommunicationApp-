@@ -1,42 +1,58 @@
 import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 /**
  * Connect to MongoDB database instance
- * Supports standard MONGO_URI, and falls back to an in-memory development MongoDB
- * instance if local MongoDB service is not currently running.
+ * Connects to MongoDB Atlas when MONGO_URI is provided.
+ * Does NOT silently hide Atlas connection failures behind in-memory fallback.
  */
 const connectDB = async () => {
-  const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/korus_db';
+  const mongoUri = process.env.MONGO_URI;
 
-  try {
-    const conn = await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 2000,
-    });
-    console.log(`[MongoDB] Connected to database: ${conn.connection.host}`);
-    return conn;
-  } catch (error) {
-    console.warn(`[MongoDB] Could not connect to ${mongoUri}: ${error.message}`);
-
-    // In development, seamlessly fallback to MongoMemoryServer so auth and persistence work out of the box
-    if (process.env.NODE_ENV !== 'production') {
-      try {
-        console.log(`[MongoDB] Starting development in-memory MongoDB instance...`);
+  if (mongoUri) {
+    try {
+      const conn = await mongoose.connect(mongoUri, {
+        serverSelectionTimeoutMS: 10000,
+      });
+      console.log(`[MongoDB] Connected to database: ${conn.connection.host}`);
+      return conn;
+    } catch (error) {
+      console.error(`[MongoDB] Atlas connection failure: Could not connect to configured MONGO_URI: ${error.message}`);
+      if (process.env.ALLOW_MEMORY_DB_FALLBACK === 'true') {
+        console.warn(`[MongoDB] Explicit fallback enabled via ALLOW_MEMORY_DB_FALLBACK. Starting in-memory instance...`);
         const { MongoMemoryServer } = await import('mongodb-memory-server');
         const mongod = await MongoMemoryServer.create();
         const memoryUri = mongod.getUri();
-
         const conn = await mongoose.connect(memoryUri);
-        console.log(`[MongoDB] Development database ready at: ${memoryUri}`);
+        console.log(`[MongoDB] Development in-memory database ready at: ${memoryUri}`);
         return conn;
-      } catch (memError) {
-        console.error(`[MongoDB] Failed to start fallback MongoDB:`, memError.message);
       }
+      throw error;
     }
+  }
 
-    if (process.env.NODE_ENV === 'production') {
-      process.exit(1);
+  // If no MONGO_URI is provided in development, allow explicit in-memory initialization
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      console.log(`[MongoDB] No MONGO_URI configured. Starting development in-memory MongoDB instance...`);
+      const { MongoMemoryServer } = await import('mongodb-memory-server');
+      const mongod = await MongoMemoryServer.create();
+      const memoryUri = mongod.getUri();
+
+      const conn = await mongoose.connect(memoryUri);
+      console.log(`[MongoDB] Development database ready at: ${memoryUri}`);
+      return conn;
+    } catch (memError) {
+      console.error(`[MongoDB] Failed to start fallback MongoDB:`, memError.message);
+      throw memError;
     }
+  } else {
+    console.error(`[MongoDB] Fatal: MONGO_URI is required in production.`);
+    process.exit(1);
   }
 };
 
 export default connectDB;
+

@@ -36,7 +36,20 @@ async function runParticipantIdentityTest() {
     console.log(`  ✓ Registered ${res.user.name} (id: ${res.user.id}, email: ${res.user.email})`);
   }
 
-  const roomId = `KOR-ID${Math.floor(1000 + Math.random() * 9000)}`;
+  // Create meeting in MongoDB Atlas as Alice
+  const meetingRes = await fetch(`${API_URL}/meetings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authData[0].token}`,
+    },
+    body: JSON.stringify({
+      title: 'Participant Identity Test Meeting',
+      category: 'general',
+    }),
+  });
+  const meetingData = await meetingRes.json();
+  const roomId = meetingData.meeting.roomId;
   console.log(`\n[3/5] Testing 1-User (Alice joins room ${roomId})...`);
 
   // Step 3: Alice joins room

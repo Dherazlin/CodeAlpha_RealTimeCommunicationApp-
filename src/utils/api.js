@@ -77,3 +77,43 @@ export const authApi = {
       method: 'GET',
     }),
 };
+
+// Meeting API methods
+export const meetingApi = {
+  createMeeting: (data = {}) =>
+    apiRequest('/meetings', {
+      method: 'POST',
+      body: data,
+    }),
+
+  getMeeting: (roomId) =>
+    apiRequest(`/meetings/${encodeURIComponent(roomId)}`, {
+      method: 'GET',
+    }),
+
+  getLiveMeetings: () =>
+    apiRequest('/meetings/live', {
+      method: 'GET',
+    }),
+
+  getMyMeetings: () =>
+    apiRequest('/meetings/my-meetings', {
+      method: 'GET',
+    }),
+
+  joinMeeting: (roomId) =>
+    apiRequest(`/meetings/${encodeURIComponent(roomId)}/join`, {
+      method: 'POST',
+    }),
+
+  leaveMeeting: (roomId) =>
+    apiRequest(`/meetings/${encodeURIComponent(roomId)}/leave`, {
+      method: 'POST',
+    }),
+
+  endMeeting: (roomId) =>
+    apiRequest(`/meetings/${encodeURIComponent(roomId)}/end`, {
+      method: 'POST',
+    }),
+};
+

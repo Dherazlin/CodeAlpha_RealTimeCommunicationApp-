@@ -9,11 +9,12 @@ import MoreMenu from '../components/meeting/MoreMenu';
 import ScreenShareModal from '../components/meeting/ScreenShareModal';
 import Modal from '../components/common/Modal';
 import Button from '../components/common/Button';
+import LoadingScreen from '../components/common/LoadingScreen';
 import { useAuth } from '../context/AuthContext';
 import { createMeetingSocket } from '../utils/socket';
 import { useWebRTC } from '../hooks/useWebRTC';
-import { upcomingMeetings, recentMeetings } from '../data/mockData';
-import { PhoneOff, Settings, Info, Copy, Check, Users, AlertCircle } from 'lucide-react';
+import { meetingApi } from '../utils/api';
+import { PhoneOff, Settings, Info, Copy, Check, Users, AlertCircle, LogOut, ArrowLeft } from 'lucide-react';
 
 export default function MeetingRoom() {
   const { roomId } = useParams();
@@ -21,13 +22,65 @@ export default function MeetingRoom() {
   const location = useLocation();
   const { user, token } = useAuth();
 
-  const matchedMeeting =
-    upcomingMeetings.find((m) => m.id === roomId) ||
-    recentMeetings.find((m) => m.id === roomId);
+  const cleanRoomId = (roomId || '').trim().toUpperCase();
+
+  // Meeting Metadata from MongoDB
+  const [meetingData, setMeetingData] = useState(null);
+  const [meetingLoading, setMeetingLoading] = useState(true);
+  const [meetingError, setMeetingError] = useState('');
+
+  // Fetch meeting metadata on mount
+  useEffect(() => {
+    let isMounted = true;
+    if (!cleanRoomId) {
+      setMeetingError('Invalid Room ID');
+      setMeetingLoading(false);
+      return;
+    }
+
+    const fetchMeeting = async () => {
+      try {
+        setMeetingLoading(true);
+        const res = await meetingApi.getMeeting(cleanRoomId);
+        if (isMounted) {
+          if (res.success && res.meeting) {
+            setMeetingData(res.meeting);
+            if (res.meeting.status === 'ended') {
+              setMeetingError('This meeting has ended and is no longer active.');
+            }
+          } else {
+            setMeetingError(res.message || 'Meeting not found');
+          }
+        }
+      } catch (err) {
+        if (isMounted) {
+          console.error('[MeetingRoom] Failed to fetch meeting metadata:', err);
+          setMeetingError(err.message || 'Meeting not found or network error');
+        }
+      } finally {
+        if (isMounted) setMeetingLoading(false);
+      }
+    };
+
+    fetchMeeting();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [cleanRoomId]);
+
   const meetingTitle =
     location.state?.title ||
-    matchedMeeting?.title ||
-    (roomId ? `Meeting ${roomId}` : 'Meeting Room');
+    meetingData?.title ||
+    (cleanRoomId ? `Meeting ${cleanRoomId}` : 'Meeting Room');
+
+  const isUserHost = Boolean(
+    meetingData &&
+      meetingData.host &&
+      ((typeof meetingData.host === 'object' &&
+        (meetingData.host._id === user?.id || meetingData.host.id === user?.id)) ||
+        meetingData.host === user?.id)
+  );
 
   // Compute initials for authenticated user
   const userInitials = user?.name
@@ -118,7 +171,6 @@ export default function MeetingRoom() {
   }, []);
 
   // WebRTC Hook for Multi-Peer Mesh Audio & Video (3-6 participants)
-  const cleanRoomId = (roomId || '').trim().toUpperCase();
   const {
     localStream,
     remoteStreams,
@@ -342,6 +394,16 @@ export default function MeetingRoom() {
       showNotification(message);
     });
 
+    // Meeting ended by host notification
+    socket.on('meeting-ended', ({ message }) => {
+      console.log('[MeetingRoom] Meeting ended by host:', message);
+      showNotification(message || 'The host has ended this meeting.');
+      cleanupWebRTC();
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 1200);
+    });
+
     // Cleanup on unmount or room change
     return () => {
       console.log(`[MeetingRoom] Cleaning up socket connection for room: ${cleanRoomId}`);
@@ -354,7 +416,7 @@ export default function MeetingRoom() {
       socketRef.current = null;
       setActiveSocket(null);
     };
-  }, [cleanRoomId, token, user?.id, user?.name, user?.email, user?.avatar, initiateOffer, closePeerConnection, showNotification, isChatOpen]);
+  }, [cleanRoomId, token, user?.id, user?.name, user?.email, user?.avatar, initiateOffer, closePeerConnection, showNotification, isChatOpen, cleanupWebRTC, navigate]);
 
   // Keep self participant media state in sync with useWebRTC hook
   useEffect(() => {
@@ -399,7 +461,7 @@ export default function MeetingRoom() {
     });
   };
 
-  // Leave meeting confirm
+  // Leave meeting confirm (Participant leave)
   const handleConfirmLeave = () => {
     setIsLeaveModalOpen(false);
     cleanupWebRTC();
@@ -407,6 +469,21 @@ export default function MeetingRoom() {
       socketRef.current.emit('leave-room', { roomId: cleanRoomId });
       socketRef.current.disconnect();
     }
+    navigate('/dashboard');
+  };
+
+  // End meeting for everyone (Host only)
+  const handleEndMeetingForAll = async () => {
+    setIsLeaveModalOpen(false);
+    try {
+      if (socketRef.current) {
+        socketRef.current.emit('end-meeting', { roomId: cleanRoomId });
+      }
+      await meetingApi.endMeeting(cleanRoomId);
+    } catch (err) {
+      console.error('Error ending meeting:', err);
+    }
+    cleanupWebRTC();
     navigate('/dashboard');
   };
 
@@ -424,6 +501,35 @@ export default function MeetingRoom() {
         ? 'connected'
         : 'connected'
       : socketConnectionStatus;
+
+  if (meetingLoading) {
+    return <LoadingScreen message="Connecting to meeting room..." />;
+  }
+
+  if (meetingError) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl">
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h2 className="text-lg font-bold text-slate-100">Unable to Join Meeting</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">{meetingError}</p>
+          <div className="pt-2">
+            <Button
+              variant="primary"
+              size="md"
+              icon={ArrowLeft}
+              onClick={() => navigate('/dashboard')}
+              className="w-full"
+            >
+              Back to Dashboard
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen bg-slate-950 flex flex-col justify-between overflow-hidden relative selection:bg-brand-500 selection:text-white">
@@ -528,11 +634,15 @@ export default function MeetingRoom() {
       <Modal
         isOpen={isLeaveModalOpen}
         onClose={() => setIsLeaveModalOpen(false)}
-        title="Leave this meeting?"
-        description="Are you sure you want to exit? You can rejoin anytime using the room code."
-        maxWidth="max-w-sm"
+        title={isUserHost ? "Host Meeting Controls" : "Leave this meeting?"}
+        description={
+          isUserHost
+            ? "As the permanent Host, you can end this meeting for all participants or exit while keeping the meeting live."
+            : "Are you sure you want to exit? You can rejoin anytime using the room code."
+        }
+        maxWidth="max-w-md"
       >
-        <div className="flex items-center justify-end gap-2 pt-4">
+        <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-4">
           <Button
             variant="ghost"
             size="sm"
@@ -540,14 +650,36 @@ export default function MeetingRoom() {
           >
             Stay in Call
           </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            icon={PhoneOff}
-            onClick={handleConfirmLeave}
-          >
-            Leave Meeting
-          </Button>
+
+          {isUserHost ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={LogOut}
+                onClick={handleConfirmLeave}
+              >
+                Leave Room Only
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                icon={PhoneOff}
+                onClick={handleEndMeetingForAll}
+              >
+                End Meeting for All
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="danger"
+              size="sm"
+              icon={PhoneOff}
+              onClick={handleConfirmLeave}
+            >
+              Leave Meeting
+            </Button>
+          )}
         </div>
       </Modal>
 

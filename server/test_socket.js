@@ -39,8 +39,21 @@ async function runTests() {
     throw new Error('Failed to register test users');
   }
 
-  const roomId = `KOR-${Math.floor(1000 + Math.random() * 9000)}`;
-  console.log(`\n[3/6] Connecting to room "${roomId}" via Socket.io...`);
+  // Create meeting in MongoDB Atlas as User 1
+  const meetingRes = await fetch(`${API_URL}/meetings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${user1Data.token}`,
+    },
+    body: JSON.stringify({
+      title: 'Real-time Test Meeting',
+      category: 'general',
+    }),
+  });
+  const meetingData = await meetingRes.json();
+  const roomId = meetingData.meeting.roomId;
+  console.log(`\n[3/6] Created meeting "${roomId}" in MongoDB. Connecting via Socket.io...`);
 
   // Step 3: Connect User 1 socket
   const socket1 = io(SOCKET_URL, {

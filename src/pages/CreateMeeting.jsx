@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Video, ArrowLeft, Calendar, Lock, Globe, Sparkles, Plus, Clock } from 'lucide-react';
+import { Video, ArrowLeft, Calendar, Lock, Globe, Sparkles, Plus, Clock, AlertCircle } from 'lucide-react';
 import Input from '../components/common/Input';
 import Button from '../components/common/Button';
-import { meetingCategories, generateRoomId } from '../data/mockData';
+import { meetingCategories } from '../data/mockData';
+import { meetingApi } from '../utils/api';
 
 export default function CreateMeeting() {
   const navigate = useNavigate();
@@ -12,17 +13,38 @@ export default function CreateMeeting() {
   const [category, setCategory] = useState('general');
   const [privacy, setPrivacy] = useState('public'); // 'public' | 'org'
   const [dateOption, setDateOption] = useState('now'); // 'now' | 'scheduled'
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleCreate = (e) => {
+  const handleCreate = async (e) => {
     e.preventDefault();
-    const newRoomId = generateRoomId();
-    // Navigate straight to meeting room
-    navigate(`/meeting/${newRoomId}`, {
-      state: {
+    setError('');
+    setLoading(true);
+
+    try {
+      const response = await meetingApi.createMeeting({
         title: title.trim() || 'New Meeting',
+        description: description.trim(),
         category,
-      },
-    });
+        privacy,
+      });
+
+      if (response.success && response.meeting) {
+        navigate(`/meeting/${response.meeting.roomId}`, {
+          state: {
+            title: response.meeting.title,
+            category: response.meeting.category,
+          },
+        });
+      } else {
+        setError(response.message || 'Failed to create meeting');
+      }
+    } catch (err) {
+      console.error('Error creating meeting:', err);
+      setError(err.message || 'Network error while creating meeting');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -55,6 +77,13 @@ export default function CreateMeeting() {
 
         {/* Form */}
         <form onSubmit={handleCreate} className="space-y-4">
+          {error && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
           <Input
             label="Meeting Title (Optional)"
             id="meeting-title"
@@ -179,8 +208,10 @@ export default function CreateMeeting() {
               variant="primary"
               size="md"
               icon={Plus}
+              loading={loading}
+              disabled={loading}
             >
-              Create Meeting
+              {loading ? 'Creating...' : 'Create Meeting'}
             </Button>
           </div>
         </form>

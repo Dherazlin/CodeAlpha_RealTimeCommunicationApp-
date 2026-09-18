@@ -1,8 +1,9 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import Meeting from '../models/Meeting.js';
 
 /**
- * In-memory room store for Phase 3 & 4 real-time communication
+ * In-memory room store for real-time presence & WebRTC signaling
  * Map<roomId, Map<socketId, participant>>
  */
 const rooms = new Map();
@@ -63,7 +64,7 @@ export function setupSocketHandlers(io) {
     /**
      * Handle joining a meeting room
      */
-    socket.on('join-room', ({ roomId }) => {
+    socket.on('join-room', async ({ roomId }) => {
       if (!roomId || typeof roomId !== 'string') {
         socket.emit('error-message', { message: 'Invalid or missing Room ID' });
         return;
@@ -76,60 +77,103 @@ export function setupSocketHandlers(io) {
         leaveRoomHandler(currentRoomId);
       }
 
-      if (!rooms.has(cleanRoomId)) {
-        rooms.set(cleanRoomId, new Map());
-      }
+      try {
+        // Query MongoDB as the single source of truth for meeting existence and host ownership
+        const meeting = await Meeting.findOne({ roomId: cleanRoomId });
 
-      const roomParticipants = rooms.get(cleanRoomId);
+        if (!meeting) {
+          console.warn(`[Socket.io] User ${socket.user.name} attempted to join non-existent meeting: ${cleanRoomId}`);
+          socket.emit('error-message', { message: `Meeting with Room ID "${cleanRoomId}" not found.` });
+          return;
+        }
 
-      // Check participant limit (3-6 supported mesh participants)
-      if (roomParticipants.size >= MAX_PARTICIPANTS && !roomParticipants.has(socket.id)) {
-        console.warn(
-          `[Socket.io] Room ${cleanRoomId} is full (${roomParticipants.size}/${MAX_PARTICIPANTS}). Rejecting user ${socket.user.name}.`
+        if (meeting.status === 'ended') {
+          console.warn(`[Socket.io] User ${socket.user.name} attempted to join ended meeting: ${cleanRoomId}`);
+          socket.emit('error-message', { message: 'This meeting has ended and cannot be joined.' });
+          return;
+        }
+
+        if (!rooms.has(cleanRoomId)) {
+          rooms.set(cleanRoomId, new Map());
+        }
+
+        const roomParticipants = rooms.get(cleanRoomId);
+
+        // Check participant limit (3-6 supported mesh participants)
+        if (roomParticipants.size >= MAX_PARTICIPANTS && !roomParticipants.has(socket.id)) {
+          console.warn(
+            `[Socket.io] Room ${cleanRoomId} is full (${roomParticipants.size}/${MAX_PARTICIPANTS}). Rejecting user ${socket.user.name}.`
+          );
+          socket.emit('error-message', {
+            message: `This meeting has reached its participant limit (maximum ${MAX_PARTICIPANTS} participants).`,
+          });
+          return;
+        }
+
+        currentRoomId = cleanRoomId;
+        socket.join(cleanRoomId);
+
+        // Permanent Host Ownership determined strictly by MongoDB Meeting.host
+        const isHost = meeting.host.toString() === socket.user.id;
+        const participantRole = isHost ? 'Host' : 'Member';
+
+        // Participant representation for real-time mesh
+        const participant = {
+          socketId: socket.id,
+          userId: socket.user.id,
+          id: socket.user.id,
+          name: socket.user.name,
+          email: socket.user.email,
+          avatar: socket.user.avatar,
+          role: participantRole,
+          isHost,
+          isMicOn: true,
+          isCameraOn: true,
+          joinedAt: new Date().toISOString(),
+        };
+
+        roomParticipants.set(socket.id, participant);
+
+        // Persist participant join in MongoDB
+        try {
+          const userIdStr = socket.user.id;
+          const existingIndex = meeting.participants.findIndex(
+            (p) => p.user && p.user.toString() === userIdStr
+          );
+
+          if (existingIndex !== -1) {
+            meeting.participants[existingIndex].leftAt = null;
+          } else {
+            meeting.participants.push({
+              user: socket.user.id,
+              joinedAt: new Date(),
+            });
+          }
+          await meeting.save();
+        } catch (dbErr) {
+          console.error('[Socket.io] Error persisting participant join in MongoDB:', dbErr.message);
+        }
+
+        console.log(
+          `[Socket.io] User "${socket.user.name}" joined room "${cleanRoomId}" as ${participant.role} (isHost=${isHost}). Total in room: ${roomParticipants.size}`
         );
-        socket.emit('error-message', {
-          message: `This meeting has reached its participant limit (maximum ${MAX_PARTICIPANTS} participants).`,
+
+        // Send the current list of participants to the joining user
+        const allParticipants = Array.from(roomParticipants.values());
+        socket.emit('room-users', {
+          roomId: cleanRoomId,
+          participants: allParticipants,
         });
-        return;
+
+        // Broadcast to all other participants in the room that a new participant has joined
+        socket.to(cleanRoomId).emit('participant-joined', {
+          roomId: cleanRoomId,
+          participant,
+        });
+      } catch (err) {
+        console.error(`[Socket.io] Error in join-room for room ${cleanRoomId}:`, err);
+        socket.emit('error-message', { message: 'Internal server error while joining meeting' });
       }
-
-      currentRoomId = cleanRoomId;
-      socket.join(cleanRoomId);
-      const isHost = roomParticipants.size === 0;
-
-      // Participant representation adhering to Phase 3, 4 & 5 requirements
-      const participant = {
-        socketId: socket.id,
-        userId: socket.user.id,
-        id: socket.user.id,
-        name: socket.user.name,
-        email: socket.user.email,
-        avatar: socket.user.avatar,
-        role: isHost ? 'Host' : socket.user.role || 'Participant',
-        isHost,
-        isMicOn: true,
-        isCameraOn: true,
-        joinedAt: new Date().toISOString(),
-      };
-
-      roomParticipants.set(socket.id, participant);
-
-      console.log(
-        `[Socket.io] User "${socket.user.name}" joined room "${cleanRoomId}" as ${participant.role}. Total in room: ${roomParticipants.size}`
-      );
-
-      // Send the current list of participants to the joining user
-      const allParticipants = Array.from(roomParticipants.values());
-      socket.emit('room-users', {
-        roomId: cleanRoomId,
-        participants: allParticipants,
-      });
-
-      // Broadcast to all other participants in the room that a new participant has joined
-      socket.to(cleanRoomId).emit('participant-joined', {
-        roomId: cleanRoomId,
-        participant,
-      });
     });
 
     /**
@@ -255,32 +299,36 @@ export function setupSocketHandlers(io) {
 
     /**
      * Helper to handle leaving a room
+     * Host ownership is NEVER transferred.
      */
-     const leaveRoomHandler = (roomIdToLeave) => {
+    const leaveRoomHandler = async (roomIdToLeave) => {
       if (!roomIdToLeave) return;
       const cleanRoomId = roomIdToLeave.trim().toUpperCase();
 
       if (rooms.has(cleanRoomId)) {
         const roomParticipants = rooms.get(cleanRoomId);
         if (roomParticipants.has(socket.id)) {
-          const departingUser = roomParticipants.get(socket.id);
-          const wasHost = departingUser?.isHost;
           roomParticipants.delete(socket.id);
 
           console.log(
             `[Socket.io] User "${socket.user?.name}" left room "${cleanRoomId}". Remaining in room: ${roomParticipants.size}`
           );
 
-          // If departing participant was host, pass host role to first remaining participant
-          if (wasHost && roomParticipants.size > 0) {
-            const firstRemaining = roomParticipants.values().next().value;
-            if (firstRemaining) {
-              firstRemaining.isHost = true;
-              firstRemaining.role = 'Host';
-              console.log(
-                `[Socket.io] Reassigned Host role to "${firstRemaining.name}" in room "${cleanRoomId}"`
+          // Update leftAt in MongoDB for this participant
+          try {
+            const meeting = await Meeting.findOne({ roomId: cleanRoomId });
+            if (meeting) {
+              const userIdStr = socket.user?.id;
+              const participant = meeting.participants.find(
+                (p) => p.user && p.user.toString() === userIdStr && !p.leftAt
               );
+              if (participant) {
+                participant.leftAt = new Date();
+                await meeting.save();
+              }
             }
+          } catch (dbErr) {
+            console.error('[Socket.io] Error recording participant leftAt in MongoDB:', dbErr.message);
           }
 
           // Broadcast to remaining users
@@ -292,10 +340,10 @@ export function setupSocketHandlers(io) {
             remainingCount: roomParticipants.size,
           });
 
-          // If room is now empty, clean it up from memory
+          // If room is now empty in memory, clean up map
           if (roomParticipants.size === 0) {
             rooms.delete(cleanRoomId);
-            console.log(`[Socket.io] Room "${cleanRoomId}" is now empty and removed from memory.`);
+            console.log(`[Socket.io] Room "${cleanRoomId}" is now empty and removed from transient memory.`);
           }
         }
       }
@@ -311,6 +359,56 @@ export function setupSocketHandlers(io) {
      */
     socket.on('leave-room', ({ roomId }) => {
       leaveRoomHandler(roomId || currentRoomId);
+    });
+
+    /**
+     * Handle End Meeting request (Host Only)
+     */
+    socket.on('end-meeting', async ({ roomId }) => {
+      const cleanRoomId = (roomId || currentRoomId || '').trim().toUpperCase();
+      if (!cleanRoomId) return;
+
+      try {
+        const meeting = await Meeting.findOne({ roomId: cleanRoomId });
+        if (!meeting) {
+          socket.emit('error-message', { message: 'Meeting not found' });
+          return;
+        }
+
+        // Verify host ownership
+        if (meeting.host.toString() !== socket.user.id) {
+          socket.emit('error-message', { message: 'Only the meeting host can end this meeting.' });
+          return;
+        }
+
+        const now = new Date();
+        meeting.status = 'ended';
+        meeting.endedAt = now;
+        meeting.participants.forEach((p) => {
+          if (!p.leftAt) p.leftAt = now;
+        });
+        await meeting.save();
+
+        console.log(`[Socket.io] Meeting "${cleanRoomId}" ended by Host ${socket.user.name}`);
+
+        // Broadcast to all participants in room
+        io.to(cleanRoomId).emit('meeting-ended', {
+          roomId: cleanRoomId,
+          message: 'The meeting has been ended by the host.',
+        });
+
+        // Clean up transient memory
+        rooms.delete(cleanRoomId);
+
+        // Remove all sockets from the room
+        const roomSockets = await io.in(cleanRoomId).fetchSockets();
+        for (const s of roomSockets) {
+          s.leave(cleanRoomId);
+        }
+      } catch (err) {
+        console.error('[Socket.io] Error ending meeting via socket:', err);
+        socket.emit('error-message', { message: 'Failed to end meeting' });
+      }
     });
 
     /**
@@ -331,3 +429,4 @@ export function setupSocketHandlers(io) {
     });
   });
 }
+
