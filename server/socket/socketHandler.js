@@ -16,6 +16,32 @@ const MAX_PARTICIPANTS = 6;
 const screenSharers = new Map();
 
 /**
+ * In-memory whiteboard state per room
+ * Map<roomId, Array<Stroke>>
+ */
+const whiteboardStrokes = new Map();
+const whiteboardSaveTimeouts = new Map();
+
+/**
+ * Helper to save whiteboard state to MongoDB
+ */
+const saveWhiteboardToDB = async (roomId, isFinal = false) => {
+  if (!whiteboardStrokes.has(roomId)) return;
+  const strokes = whiteboardStrokes.get(roomId);
+  
+  try {
+    const meeting = await Meeting.findOne({ roomId });
+    if (meeting) {
+      meeting.whiteboardData = JSON.stringify(strokes);
+      await meeting.save();
+      console.log(`[Socket.io] Saved whiteboard for room ${roomId} to DB (${strokes.length} strokes). isFinal: ${isFinal}`);
+    }
+  } catch (err) {
+    console.error(`[Socket.io] Error saving whiteboard for room ${roomId}:`, err.message);
+  }
+};
+
+/**
  * Configure and initialize Socket.io handlers
  * @param {import('socket.io').Server} io
  */
@@ -101,6 +127,20 @@ export function setupSocketHandlers(io) {
 
         if (!rooms.has(cleanRoomId)) {
           rooms.set(cleanRoomId, new Map());
+          
+          // Load whiteboard from DB if available and memory is empty
+          if (!whiteboardStrokes.has(cleanRoomId)) {
+            if (meeting.whiteboardData) {
+              try {
+                whiteboardStrokes.set(cleanRoomId, JSON.parse(meeting.whiteboardData));
+              } catch (e) {
+                console.error('Error parsing whiteboard data from DB:', e);
+                whiteboardStrokes.set(cleanRoomId, []);
+              }
+            } else {
+              whiteboardStrokes.set(cleanRoomId, []);
+            }
+          }
         }
 
         const roomParticipants = rooms.get(cleanRoomId);
@@ -172,6 +212,11 @@ export function setupSocketHandlers(io) {
           screenSharer: screenSharers.get(cleanRoomId) || null,
         });
 
+        // Send current whiteboard state to joining user
+        if (whiteboardStrokes.has(cleanRoomId)) {
+          socket.emit('whiteboard-sync', { strokes: whiteboardStrokes.get(cleanRoomId) });
+        }
+
         // Broadcast to all other participants in the room that a new participant has joined
         socket.to(cleanRoomId).emit('participant-joined', {
           roomId: cleanRoomId,
@@ -208,6 +253,72 @@ export function setupSocketHandlers(io) {
       if (!roomId || !file) return;
       console.log(`[Socket.io] File shared in room ${roomId} by ${socket.user.name}`);
       socket.to(roomId).emit('meeting-file-shared', { file });
+    });
+
+    /**
+     * Whiteboard Signalling
+     */
+    socket.on('whiteboard-draw', ({ roomId, strokeId, color, size, points }) => {
+      const cleanRoomId = (roomId || currentRoomId || '').trim().toUpperCase();
+      if (!cleanRoomId || !rooms.has(cleanRoomId) || !strokeId || !points) return;
+      
+      // Basic payload validation
+      if (points.length > 500) {
+         console.warn(`[Socket.io] Whiteboard payload too large from ${socket.user.name}`);
+         return;
+      }
+
+      if (!whiteboardStrokes.has(cleanRoomId)) {
+        whiteboardStrokes.set(cleanRoomId, []);
+      }
+      
+      const strokes = whiteboardStrokes.get(cleanRoomId);
+      
+      // Protect against memory overflow (max 2000 strokes)
+      if (strokes.length > 2000) return;
+
+      const strokeData = { strokeId, color, size, points, userId: socket.user.id };
+      
+      // Append stroke
+      strokes.push(strokeData);
+      
+      // Broadcast to others
+      socket.to(cleanRoomId).emit('whiteboard-draw', strokeData);
+      
+      // Debounce DB save
+      if (whiteboardSaveTimeouts.has(cleanRoomId)) {
+        clearTimeout(whiteboardSaveTimeouts.get(cleanRoomId));
+      }
+      whiteboardSaveTimeouts.set(cleanRoomId, setTimeout(() => {
+        saveWhiteboardToDB(cleanRoomId);
+      }, 5000));
+    });
+
+    socket.on('whiteboard-undo', ({ roomId }) => {
+      const cleanRoomId = (roomId || currentRoomId || '').trim().toUpperCase();
+      if (!cleanRoomId || !whiteboardStrokes.has(cleanRoomId)) return;
+      
+      const strokes = whiteboardStrokes.get(cleanRoomId);
+      if (strokes.length === 0) return;
+      
+      // Server-authoritative undo: remove the last stroke
+      const removedStroke = strokes.pop();
+      
+      // Broadcast undo
+      io.to(cleanRoomId).emit('whiteboard-undo', { strokeId: removedStroke.strokeId });
+      
+      saveWhiteboardToDB(cleanRoomId);
+    });
+
+    socket.on('whiteboard-clear', ({ roomId }) => {
+      const cleanRoomId = (roomId || currentRoomId || '').trim().toUpperCase();
+      if (!cleanRoomId) return;
+      
+      // Server-authoritative clear
+      whiteboardStrokes.set(cleanRoomId, []);
+      io.to(cleanRoomId).emit('whiteboard-clear');
+      
+      saveWhiteboardToDB(cleanRoomId);
     });
 
     /**
@@ -371,9 +482,16 @@ export function setupSocketHandlers(io) {
 
           // If room is now empty in memory, clean up maps
           if (roomParticipants.size === 0) {
-            rooms.delete(cleanRoomId);
-            screenSharers.delete(cleanRoomId);
-            console.log(`[Socket.io] Room "${cleanRoomId}" is now empty and removed from transient memory.`);
+            saveWhiteboardToDB(cleanRoomId, true).then(() => {
+              rooms.delete(cleanRoomId);
+              screenSharers.delete(cleanRoomId);
+              whiteboardStrokes.delete(cleanRoomId);
+              if (whiteboardSaveTimeouts.has(cleanRoomId)) {
+                 clearTimeout(whiteboardSaveTimeouts.get(cleanRoomId));
+                 whiteboardSaveTimeouts.delete(cleanRoomId);
+              }
+              console.log(`[Socket.io] Room "${cleanRoomId}" is now empty and removed from transient memory.`);
+            });
           }
         }
       }
@@ -501,9 +619,17 @@ export function setupSocketHandlers(io) {
           message: 'The meeting has been ended by the host.',
         });
 
+        // Save whiteboard one last time immediately
+        await saveWhiteboardToDB(cleanRoomId, true);
+
         // Clean up transient memory (including any active screen share)
         rooms.delete(cleanRoomId);
         screenSharers.delete(cleanRoomId);
+        whiteboardStrokes.delete(cleanRoomId);
+        if (whiteboardSaveTimeouts.has(cleanRoomId)) {
+           clearTimeout(whiteboardSaveTimeouts.get(cleanRoomId));
+           whiteboardSaveTimeouts.delete(cleanRoomId);
+        }
 
         // Remove all sockets from the room
         const roomSockets = await io.in(cleanRoomId).fetchSockets();
@@ -517,7 +643,7 @@ export function setupSocketHandlers(io) {
     });
 
     /**
-     * Handle client disconnection
+     * Handle Disconnection
      */
     socket.on('disconnect', (reason) => {
       console.log(`[Socket.io] Client disconnected: ${socket.id} (User: ${socket.user?.name}, Reason: ${reason})`);

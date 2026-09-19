@@ -11,6 +11,7 @@ import {
   MoreVertical,
   PhoneOff,
   Paperclip,
+  Pen,
 } from 'lucide-react';
 
 export default function MeetingControls({
@@ -26,6 +27,8 @@ export default function MeetingControls({
   hasUnreadChat = false,
   isFilePanelOpen,
   onToggleFilePanel,
+  isWhiteboardOpen,
+  onToggleWhiteboard,
   isScreenSharing = false,
   onStartScreenShare,
   onStopScreenShare,
@@ -156,6 +159,21 @@ export default function MeetingControls({
           title="Shared Files"
         >
           <Paperclip className="w-5 h-5 sm:w-5 sm:h-5" />
+        </button>
+
+        {/* Whiteboard Toggle */}
+        <button
+          type="button"
+          onClick={onToggleWhiteboard}
+          className={`relative flex items-center justify-center p-2.5 sm:p-3 rounded-xl transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-950 ${
+            isWhiteboardOpen
+              ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-md ring-2 ring-purple-500/40'
+              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white'
+          }`}
+          aria-label="Toggle Whiteboard"
+          title="Whiteboard"
+        >
+          <Pen className="w-5 h-5 sm:w-5 sm:h-5" />
         </button>
 
         {/* More Options Dropdown Trigger */}

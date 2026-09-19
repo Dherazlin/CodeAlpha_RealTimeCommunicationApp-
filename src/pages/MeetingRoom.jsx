@@ -6,6 +6,7 @@ import MeetingControls from '../components/meeting/MeetingControls';
 import ParticipantPanel from '../components/meeting/ParticipantPanel';
 import ChatPanel from '../components/meeting/ChatPanel';
 import FilePanel from '../components/meeting/FilePanel';
+import Whiteboard from '../components/meeting/Whiteboard';
 import MoreMenu from '../components/meeting/MoreMenu';
 import ScreenShareModal from '../components/meeting/ScreenShareModal';
 import Modal from '../components/common/Modal';
@@ -150,6 +151,7 @@ export default function MeetingRoom() {
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isFilePanelOpen, setIsFilePanelOpen] = useState(false);
+  const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
   const [sharedFiles, setSharedFiles] = useState([]);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [screenSharingParticipant, setScreenSharingParticipant] = useState(null);
@@ -799,6 +801,15 @@ export default function MeetingRoom() {
         />
       </div>
 
+      {/* Whiteboard Overlay */}
+      {isWhiteboardOpen && (
+        <Whiteboard 
+          socket={activeSocket} 
+          roomId={cleanRoomId} 
+          onClose={() => setIsWhiteboardOpen(false)} 
+        />
+      )}
+
       {/* More Options Popup Menu */}
       <MoreMenu
         isOpen={isMoreOpen}
@@ -821,6 +832,8 @@ export default function MeetingRoom() {
         hasUnreadChat={hasUnreadChat}
         isFilePanelOpen={isFilePanelOpen}
         onToggleFilePanel={handleToggleFilePanel}
+        isWhiteboardOpen={isWhiteboardOpen}
+        onToggleWhiteboard={() => setIsWhiteboardOpen(prev => !prev)}
         isScreenSharing={isScreenSharing}
         onStartScreenShare={handleStartScreenShare}
         onStopScreenShare={handleStopScreenShare}

@@ -62,6 +62,10 @@ const meetingSchema = new mongoose.Schema(
       default: 'live',
       index: true,
     },
+    whiteboardData: {
+      type: String, // Serialized JSON string of strokes
+      default: null,
+    },
     startedAt: {
       type: Date,
       default: Date.now,
