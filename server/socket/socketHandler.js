@@ -201,6 +201,16 @@ export function setupSocketHandlers(io) {
     });
 
     /**
+     * File Sharing Signalling
+     * Broadcasts to all users in the room when a new file is uploaded
+     */
+    socket.on('meeting-file-shared', ({ roomId, file }) => {
+      if (!roomId || !file) return;
+      console.log(`[Socket.io] File shared in room ${roomId} by ${socket.user.name}`);
+      socket.to(roomId).emit('meeting-file-shared', { file });
+    });
+
+    /**
      * WebRTC Signalling: Answer
      * User B sends answer back to User A
      */

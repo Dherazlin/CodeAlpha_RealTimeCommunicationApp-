@@ -26,6 +26,11 @@ export async function apiRequest(endpoint, options = {}) {
     },
   };
 
+  // Browser fetch will automatically set the correct Content-Type with boundary for FormData
+  if (options.body instanceof FormData) {
+    delete config.headers['Content-Type'];
+  }
+
   if (config.body && typeof config.body === 'object' && !(config.body instanceof FormData)) {
     config.body = JSON.stringify(config.body);
   }

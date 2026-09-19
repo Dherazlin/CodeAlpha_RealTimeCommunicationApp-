@@ -5,6 +5,7 @@ import VideoGrid from '../components/meeting/VideoGrid';
 import MeetingControls from '../components/meeting/MeetingControls';
 import ParticipantPanel from '../components/meeting/ParticipantPanel';
 import ChatPanel from '../components/meeting/ChatPanel';
+import FilePanel from '../components/meeting/FilePanel';
 import MoreMenu from '../components/meeting/MoreMenu';
 import ScreenShareModal from '../components/meeting/ScreenShareModal';
 import Modal from '../components/common/Modal';
@@ -148,6 +149,8 @@ export default function MeetingRoom() {
   // Modals and Drawers
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isFilePanelOpen, setIsFilePanelOpen] = useState(false);
+  const [sharedFiles, setSharedFiles] = useState([]);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [screenSharingParticipant, setScreenSharingParticipant] = useState(null);
   const [screenShareStream, setScreenShareStream] = useState(null);
@@ -456,6 +459,13 @@ export default function MeetingRoom() {
       }
     });
 
+    // File shared broadcast received
+    socket.on('meeting-file-shared', ({ file }) => {
+      console.log('[MeetingRoom] New file shared:', file);
+      setSharedFiles((prev) => [file, ...prev]);
+      showNotification(`${file.uploaderName} shared a file: ${file.originalName}`);
+    });
+
     // Server error notification
     socket.on('error-message', ({ message }) => {
       console.warn('[MeetingRoom] Server error message:', message);
@@ -573,6 +583,25 @@ export default function MeetingRoom() {
     if (nextState) {
       setHasUnreadChat(false);
       setIsParticipantsOpen(false);
+      setIsFilePanelOpen(false);
+    }
+  };
+
+  // Toggle File Panel drawer
+  const handleToggleFilePanel = () => {
+    const nextState = !isFilePanelOpen;
+    setIsFilePanelOpen(nextState);
+    if (nextState) {
+      setIsParticipantsOpen(false);
+      setIsChatOpen(false);
+      // Fetch files if empty (or always to refresh)
+      if (sharedFiles.length === 0) {
+        meetingApi.getFiles(cleanRoomId)
+          .then((res) => {
+            if (res.success) setSharedFiles(res.files);
+          })
+          .catch(err => console.error('Failed to load shared files:', err));
+      }
     }
   };
 
@@ -753,6 +782,23 @@ export default function MeetingRoom() {
         />
       </div>
 
+      {/* File Share Overlay / Drawer */}
+      <div
+        className={`fixed inset-y-0 right-0 z-40 transform transition-transform duration-300 ease-in-out md:static ${
+          isFilePanelOpen ? 'translate-x-0' : 'translate-x-full md:hidden md:w-0'
+        }`}
+      >
+        <FilePanel
+          roomId={cleanRoomId}
+          onClose={() => setIsFilePanelOpen(false)}
+          sharedFiles={sharedFiles}
+          onUploadComplete={(newFile) => {
+             setSharedFiles((prev) => [newFile, ...prev]);
+             socketRef.current?.emit('meeting-file-shared', { roomId: cleanRoomId, file: newFile });
+          }}
+        />
+      </div>
+
       {/* More Options Popup Menu */}
       <MoreMenu
         isOpen={isMoreOpen}
@@ -773,6 +819,8 @@ export default function MeetingRoom() {
         isChatOpen={isChatOpen}
         onToggleChat={handleToggleChat}
         hasUnreadChat={hasUnreadChat}
+        isFilePanelOpen={isFilePanelOpen}
+        onToggleFilePanel={handleToggleFilePanel}
         isScreenSharing={isScreenSharing}
         onStartScreenShare={handleStartScreenShare}
         onStopScreenShare={handleStopScreenShare}

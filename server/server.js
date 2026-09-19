@@ -97,6 +97,10 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/meetings', meetingRoutes);
 
+// Register file routes under meetings router or directly here
+import meetingFileRoutes from './routes/meetingFileRoutes.js';
+app.use('/api/meetings/:roomId/files', meetingFileRoutes);
+
 // 404 Route Handler
 app.use((req, res) => {
   res.status(404).json({

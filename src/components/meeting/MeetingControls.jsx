@@ -10,6 +10,7 @@ import {
   ScreenShareOff,
   MoreVertical,
   PhoneOff,
+  Paperclip,
 } from 'lucide-react';
 
 export default function MeetingControls({
@@ -23,6 +24,8 @@ export default function MeetingControls({
   isChatOpen,
   onToggleChat,
   hasUnreadChat = false,
+  isFilePanelOpen,
+  onToggleFilePanel,
   isScreenSharing = false,
   onStartScreenShare,
   onStopScreenShare,
@@ -126,18 +129,33 @@ export default function MeetingControls({
         <button
           type="button"
           onClick={onToggleChat}
-          className={`relative flex flex-col sm:flex-row items-center justify-center gap-1 p-2.5 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-950 ${
+          className={`relative flex items-center justify-center p-2.5 sm:p-3 rounded-xl transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-950 ${
             isChatOpen
-              ? 'bg-brand-600 text-white shadow-sm'
-              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200 hover:text-white'
+              ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md ring-2 ring-blue-500/40'
+              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white'
           }`}
           aria-label="Toggle chat"
+          title="Chat"
         >
-          <MessageSquare className="w-5 h-5" />
-          <span className="hidden md:inline">Chat</span>
+          <MessageSquare className="w-5 h-5 sm:w-5 sm:h-5" />
           {hasUnreadChat && !isChatOpen && (
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-brand-500 ring-2 ring-slate-950" />
+            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-rose-500 border-2 border-slate-900 rounded-full animate-pulse" />
           )}
+        </button>
+
+        {/* File Share Toggle */}
+        <button
+          type="button"
+          onClick={onToggleFilePanel}
+          className={`relative flex items-center justify-center p-2.5 sm:p-3 rounded-xl transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-950 ${
+            isFilePanelOpen
+              ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md ring-2 ring-emerald-500/40'
+              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white'
+          }`}
+          aria-label="Toggle shared files"
+          title="Shared Files"
+        >
+          <Paperclip className="w-5 h-5 sm:w-5 sm:h-5" />
         </button>
 
         {/* More Options Dropdown Trigger */}
