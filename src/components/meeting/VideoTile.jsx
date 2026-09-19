@@ -64,10 +64,10 @@ export default function VideoTile({
 
   return (
     <div
-      className={`relative w-full h-full min-h-[200px] sm:min-h-[260px] md:min-h-[300px] rounded-2xl overflow-hidden bg-slate-900 border transition-all duration-200 flex items-center justify-center select-none shadow-md ${
+      className={`relative w-full h-full min-h-[200px] sm:min-h-[260px] md:min-h-[300px] rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-900 border transition-all duration-200 flex items-center justify-center select-none shadow-md ${
         isSpeaking
-          ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-emerald-500/10'
-          : 'border-slate-800/90 hover:border-slate-700'
+          ? 'border-brand-500 ring-2 ring-brand-500/50 shadow-brand-500/10'
+          : 'border-slate-200 dark:border-slate-800/90 hover:border-slate-300 dark:hover:border-slate-700'
       }`}
     >
       {/* Hidden audio element — always mounted for remote participants so audio works when camera is off */}
@@ -83,7 +83,7 @@ export default function VideoTile({
 
       {/* Video / Camera Feed Element */}
       {isCameraOn ? (
-        <div className="relative w-full h-full flex items-center justify-center bg-slate-950">
+        <div className="relative w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-950">
           {hasVideoStream ? (
             <video
               ref={videoRefCallback}
@@ -99,18 +99,18 @@ export default function VideoTile({
               className="w-full h-full object-cover opacity-90 transition-transform duration-300"
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-950">
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-900 dark:to-slate-950">
               <Avatar
                 name={name}
                 initials={initials}
                 size="2xl"
                 isSpeaking={isSpeaking}
-                className="shadow-xl ring-4 ring-slate-800"
+                className="shadow-xl ring-4 ring-white dark:ring-slate-800"
               />
             </div>
           )}
           {/* Subtle vignette */}
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-slate-950/30 pointer-events-none" />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/20 dark:from-slate-950/80 via-transparent to-transparent dark:to-slate-950/30 pointer-events-none" />
         </div>
       ) : (
         /* Camera Off Placeholder Avatar */
@@ -121,13 +121,13 @@ export default function VideoTile({
               initials={initials}
               size="2xl"
               isSpeaking={isSpeaking}
-              className="shadow-lg ring-4 ring-slate-800"
+              className="shadow-lg ring-4 ring-white dark:ring-slate-800"
             />
-            <div className="absolute -bottom-1 -right-1 p-1.5 rounded-full bg-slate-800 border border-slate-700 text-slate-400 shadow-sm">
+            <div className="absolute -bottom-1 -right-1 p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 shadow-sm">
               <VideoOff className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-xs font-medium text-slate-400">Camera turned off</p>
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Camera turned off</p>
         </div>
       )}
 
@@ -157,7 +157,7 @@ export default function VideoTile({
       {/* Top Right Controls / Host Tag */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
         {isHost && (
-          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-semibold backdrop-blur-xs">
+          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 text-amber-600 dark:text-amber-300 text-[10px] font-semibold backdrop-blur-xs">
             <Crown className="w-3 h-3" />
             <span>Host</span>
           </div>
@@ -166,7 +166,7 @@ export default function VideoTile({
 
       {/* Bottom Info Bar: Name + Mic Status */}
       <div className="absolute bottom-3 left-3 right-3 z-10 flex items-center justify-between pointer-events-none">
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950/80 backdrop-blur-md border border-slate-800 text-white text-xs font-medium shadow-sm max-w-[85%]">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-950/80 backdrop-blur-md border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white text-xs font-medium shadow-sm max-w-[85%]">
           <span className="truncate">
             {isSelf
               ? name.endsWith('(You)')
@@ -179,8 +179,8 @@ export default function VideoTile({
         <div
           className={`p-1.5 rounded-lg backdrop-blur-md border shadow-sm ${
             isMicOn
-              ? 'bg-slate-950/80 border-slate-800 text-slate-300'
-              : 'bg-rose-500/90 border-rose-600 text-white'
+              ? 'bg-white/90 dark:bg-slate-950/80 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
+              : 'bg-rose-50 dark:bg-rose-500/90 border-rose-200 dark:border-rose-600 text-rose-600 dark:text-white'
           }`}
           title={isMicOn ? 'Microphone on' : 'Microphone muted'}
         >

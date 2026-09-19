@@ -24,9 +24,9 @@ export default function MoreMenu({ isOpen, onClose, onOpenSettings, onOpenInfo }
   return (
     <div
       ref={menuRef}
-      className="absolute bottom-16 right-4 sm:right-auto z-40 w-56 bg-slate-900 border border-slate-700/90 rounded-2xl shadow-xl p-1.5 text-slate-200 animate-in fade-in slide-in-from-bottom-2 duration-150"
+      className="absolute bottom-16 right-4 sm:right-auto z-40 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/90 rounded-2xl shadow-xl p-1.5 text-slate-800 dark:text-slate-200 animate-in fade-in slide-in-from-bottom-2 duration-150"
     >
-      <div className="px-3 py-1.5 border-b border-slate-800 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+      <div className="px-3 py-1.5 border-b border-slate-100 dark:border-slate-800 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
         Meeting Options
       </div>
 
@@ -37,9 +37,9 @@ export default function MoreMenu({ isOpen, onClose, onOpenSettings, onOpenInfo }
             onClose();
             if (onOpenSettings) onOpenSettings();
           }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-200 hover:bg-slate-800 hover:text-white transition-colors text-left"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors text-left"
         >
-          <Settings className="w-4 h-4 text-slate-400" />
+          <Settings className="w-4 h-4 text-slate-500 dark:text-slate-400" />
           <span>Audio & Video Settings</span>
         </button>
 
@@ -49,9 +49,9 @@ export default function MoreMenu({ isOpen, onClose, onOpenSettings, onOpenInfo }
             onClose();
             if (onOpenInfo) onOpenInfo();
           }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-200 hover:bg-slate-800 hover:text-white transition-colors text-left"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors text-left"
         >
-          <Info className="w-4 h-4 text-slate-400" />
+          <Info className="w-4 h-4 text-slate-500 dark:text-slate-400" />
           <span>Meeting Information</span>
         </button>
 
@@ -61,9 +61,9 @@ export default function MoreMenu({ isOpen, onClose, onOpenSettings, onOpenInfo }
             onClose();
             alert('Mock Action: Report Problem dialog will connect in a future release.');
           }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-200 hover:bg-slate-800 hover:text-white transition-colors text-left"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors text-left"
         >
-          <AlertTriangle className="w-4 h-4 text-slate-400" />
+          <AlertTriangle className="w-4 h-4 text-slate-500 dark:text-slate-400" />
           <span>Report a Problem</span>
         </button>
 
@@ -73,9 +73,9 @@ export default function MoreMenu({ isOpen, onClose, onOpenSettings, onOpenInfo }
             onClose();
             alert('Keyboard shortcuts:\n• Space / M: Toggle Mic\n• V: Toggle Camera\n• C: Open Chat\n• P: Participants');
           }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-200 hover:bg-slate-800 hover:text-white transition-colors text-left"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors text-left"
         >
-          <Keyboard className="w-4 h-4 text-slate-400" />
+          <Keyboard className="w-4 h-4 text-slate-500 dark:text-slate-400" />
           <span>Keyboard Shortcuts</span>
         </button>
       </div>

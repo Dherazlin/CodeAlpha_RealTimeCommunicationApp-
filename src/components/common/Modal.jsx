@@ -53,17 +53,17 @@ export default function Modal({
       {/* Modal Dialog Card */}
       <div
         ref={modalRef}
-        className={`relative w-full ${maxWidth} bg-white rounded-2xl shadow-modal border border-slate-200/80 p-6 z-10 my-8 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-150`}
+        className={`relative w-full ${maxWidth} bg-white dark:bg-[#181A22] rounded-2xl shadow-modal border border-slate-200/80 dark:border-slate-800/80 p-6 z-10 my-8 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-150`}
       >
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             {title && (
-              <h2 id="modal-title" className="text-lg font-bold text-slate-900 tracking-tight">
+              <h2 id="modal-title" className="text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                 {title}
               </h2>
             )}
             {description && (
-              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                 {description}
               </p>
             )}
@@ -74,7 +74,7 @@ export default function Modal({
               size="iconSm"
               onClick={onClose}
               aria-label="Close dialog"
-              className="text-slate-400 hover:text-slate-600 rounded-lg -mr-1 -mt-1"
+              className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 rounded-lg -mr-1 -mt-1"
             >
               <X className="w-5 h-5" />
             </Button>

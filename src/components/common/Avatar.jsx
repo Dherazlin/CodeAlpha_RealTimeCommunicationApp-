@@ -54,7 +54,7 @@ export default function Avatar({
   return (
     <div
       className={`relative inline-flex items-center justify-center shrink-0 rounded-full select-none ${
-        isSpeaking ? 'ring-2 ring-emerald-500 ring-offset-2 animate-pulse' : ''
+        isSpeaking ? 'ring-2 ring-brand-500 ring-offset-2 animate-pulse' : ''
       } ${className}`}
     >
       {src && !imageError ? (

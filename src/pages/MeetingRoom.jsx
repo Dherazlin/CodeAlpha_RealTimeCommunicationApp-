@@ -549,6 +549,16 @@ export default function MeetingRoom() {
     }
   };
 
+  const handleToggleWhiteboard = () => {
+    const nextState = !isWhiteboardOpen;
+    setIsWhiteboardOpen(nextState);
+    if (nextState) {
+      setIsParticipantsOpen(false);
+      setIsChatOpen(false);
+      setIsFilePanelOpen(false);
+    }
+  };
+
   // Handle stop screen sharing
   const handleStopScreenShare = () => {
     stopScreenShare();
@@ -574,8 +584,13 @@ export default function MeetingRoom() {
 
   // Toggle Participant drawer
   const handleToggleParticipants = () => {
-    setIsParticipantsOpen((prev) => !prev);
-    if (!isParticipantsOpen) setIsChatOpen(false);
+    const nextState = !isParticipantsOpen;
+    setIsParticipantsOpen(nextState);
+    if (nextState) {
+      setIsChatOpen(false);
+      setIsFilePanelOpen(false);
+      setIsWhiteboardOpen(false);
+    }
   };
 
   // Toggle Chat drawer
@@ -586,6 +601,7 @@ export default function MeetingRoom() {
       setHasUnreadChat(false);
       setIsParticipantsOpen(false);
       setIsFilePanelOpen(false);
+      setIsWhiteboardOpen(false);
     }
   };
 
@@ -596,6 +612,7 @@ export default function MeetingRoom() {
     if (nextState) {
       setIsParticipantsOpen(false);
       setIsChatOpen(false);
+      setIsWhiteboardOpen(false);
       // Fetch files if empty (or always to refresh)
       if (sharedFiles.length === 0) {
         meetingApi.getFiles(cleanRoomId)
@@ -664,8 +681,8 @@ export default function MeetingRoom() {
 
   if (meetingError) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl">
+      <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-xl dark:shadow-2xl">
           <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
             <AlertCircle className="w-6 h-6" />
           </div>
@@ -688,7 +705,7 @@ export default function MeetingRoom() {
   }
 
   return (
-    <div className="h-screen w-screen bg-slate-950 flex flex-col justify-between overflow-hidden relative selection:bg-brand-500 selection:text-white">
+    <div className="h-screen w-screen bg-slate-100 dark:bg-slate-950 flex flex-col justify-between overflow-hidden relative selection:bg-brand-500 selection:text-white">
       {/* Top Meeting Header */}
       <MeetingHeader
         roomId={roomId || 'KOR-ROOM'}
@@ -720,11 +737,11 @@ export default function MeetingRoom() {
       {/* Subtle Toast Notification Banner */}
       {notification && (
         <div
-          className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-slate-800/95 border border-slate-700/90 text-slate-100 text-xs px-4 py-2 rounded-full shadow-xl backdrop-blur-md flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200 pointer-events-none"
+          className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-white/95 dark:bg-slate-800/95 border border-slate-200 dark:border-slate-700/90 text-slate-800 dark:text-slate-100 text-xs px-4 py-2 rounded-full shadow-lg dark:shadow-xl backdrop-blur-md flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200 pointer-events-none"
           role="status"
           aria-live="polite"
         >
-          <span className="w-2 h-2 rounded-full bg-brand-400 animate-ping" />
+          <span className="w-2 h-2 rounded-full bg-brand-500 dark:bg-brand-400 animate-ping" />
           <span className="font-medium">{notification}</span>
         </div>
       )}
@@ -833,7 +850,7 @@ export default function MeetingRoom() {
         isFilePanelOpen={isFilePanelOpen}
         onToggleFilePanel={handleToggleFilePanel}
         isWhiteboardOpen={isWhiteboardOpen}
-        onToggleWhiteboard={() => setIsWhiteboardOpen(prev => !prev)}
+        onToggleWhiteboard={handleToggleWhiteboard}
         isScreenSharing={isScreenSharing}
         onStartScreenShare={handleStartScreenShare}
         onStopScreenShare={handleStopScreenShare}
