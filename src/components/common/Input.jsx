@@ -15,6 +15,7 @@ const Input = forwardRef(function Input(
     className = '',
     inputClassName = '',
     required = false,
+    placeholder, // destructure placeholder to ignore it
     ...props
   },
   ref
@@ -42,12 +43,12 @@ const Input = forwardRef(function Input(
           required={required}
           aria-invalid={!!error}
           aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined}
-          className={`w-full rounded-xl border bg-white dark:bg-[#181A22] px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 dark:focus:ring-brand-500 dark:focus:border-brand-500 disabled:bg-slate-50 dark:disabled:bg-slate-900 disabled:text-slate-500 dark:disabled:text-slate-600 ${
+          className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm text-slate-900 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 disabled:bg-slate-50 disabled:text-slate-500 ${
             Icon ? 'pl-10' : ''
           } ${endAdornment ? 'pr-11' : ''} ${
             error
-              ? 'border-rose-300 text-rose-900 focus:border-rose-500 focus:ring-rose-500 dark:border-rose-500/50 dark:text-rose-400'
-              : 'border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600'
+              ? 'border-rose-300 text-rose-900 focus:border-rose-500 focus:ring-rose-500'
+              : 'border-slate-300 hover:border-slate-400'
           } ${inputClassName}`}
           {...props}
         />
