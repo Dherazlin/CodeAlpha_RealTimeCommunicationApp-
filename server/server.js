@@ -20,22 +20,35 @@ const app = express();
 const server = http.createServer(app);
 
 // CORS Configuration
-const allowedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
-const corsOriginValidator = (origin, callback) => {
-  // Allow requests with no origin (like mobile apps or curl/Postman) or matching origin
-  if (!origin || origin === allowedOrigin || origin.startsWith('http://localhost:')) {
-    callback(null, true);
-  } else {
-    callback(new Error('CORS blocked origin'));
-  }
+// Normalize the allowed origin: trim whitespace and remove any trailing slash
+// so that copy-paste differences in Render's dashboard don't cause silent failures.
+const allowedOrigin = (process.env.CLIENT_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl / Postman / mobile apps) or matching origin
+    if (!origin) {
+      return callback(null, true);
+    }
+    // Normalize the incoming origin the same way
+    const normalizedOrigin = origin.trim().replace(/\/+$/, '');
+    if (normalizedOrigin === allowedOrigin || normalizedOrigin.startsWith('http://localhost')) {
+      return callback(null, true);
+    }
+    console.warn(`[CORS] Blocked origin: "${origin}" (allowed: "${allowedOrigin}")`);
+    return callback(new Error(`CORS blocked origin: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
-app.use(
-  cors({
-    origin: corsOriginValidator,
-    credentials: true,
-  })
-);
+// Apply CORS globally
+app.use(cors(corsOptions));
+
+// Explicitly handle OPTIONS preflight for ALL routes BEFORE any route handlers
+// so the 404 catch-all never intercepts an OPTIONS request.
+app.options('*', cors(corsOptions));
 
 // Body parser
 app.use(express.json());
@@ -72,12 +85,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Initialize Socket.io
+// Initialize Socket.io with the same CORS policy as Express
 const io = new Server(server, {
   cors: {
-    origin: corsOriginValidator,
-    methods: ['GET', 'POST'],
-    credentials: true,
+    origin: corsOptions.origin,
+    methods: corsOptions.methods,
+    allowedHeaders: corsOptions.allowedHeaders,
+    credentials: corsOptions.credentials,
   },
   pingTimeout: 60000,
   pingInterval: 25000,
