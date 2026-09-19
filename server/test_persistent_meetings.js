@@ -57,7 +57,7 @@ async function runTests() {
   // SCENARIO A: Alice creates meeting KOR-TEST1 -> Alice = Host
   // ----------------------------------------------------
   console.log('--- SCENARIO A: Alice creates meeting KOR-TEST1 ---');
-  const customRoomId = `KOR-TEST1_${timestamp}`.substring(0, 10).toUpperCase();
+  const customRoomId = `KOR-TEST_${timestamp}`.toUpperCase();
 
   const createRes = await fetch(`${BASE_URL}/meetings`, {
     method: 'POST',
