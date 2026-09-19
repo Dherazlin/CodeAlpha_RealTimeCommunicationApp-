@@ -1,7 +1,19 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { Mic, MicOff, VideoOff, Crown, WifiOff, Loader2 } from 'lucide-react';
 import Avatar from '../common/Avatar';
 
+/**
+ * VideoTile — renders one participant's video, audio, and status overlays.
+ *
+ * Audio fix (Phase 1):
+ *   A hidden <audio> element always handles remote audio independently of camera state.
+ *   This prevents audio from being silenced when the remote camera is off.
+ *
+ * srcObject fix (Phase 1):
+ *   We use a ref-callback pattern (`ref={(el) => { if (el && el.srcObject !== stream) el.srcObject = stream; }}`)
+ *   so the DOM element receives the stream on mount and on every distinct stream reference change,
+ *   even if React's reference-equality check would normally skip the effect.
+ */
 export default function VideoTile({
   participant,
   stream,
@@ -9,16 +21,45 @@ export default function VideoTile({
   isSelf = false,
 }) {
   const { name, avatar, initials, isHost, isMicOn, isCameraOn, isSpeaking } = participant;
-  const videoRef = useRef(null);
 
+  // Dedicated audio element ref — always mounted, never conditional, so remote audio is never cut off
+  const audioRef = useRef(null);
+
+  // Attach remote audio stream to the <audio> element whenever the stream changes
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+    const el = audioRef.current;
+    if (!el || isSelf) return;
+    if (stream && el.srcObject !== stream) {
+      el.srcObject = stream;
+      el.play().catch((err) => {
+        // Autoplay policy may block — this is fine; user interaction will unblock it
+        console.warn('[VideoTile] audio.play() blocked by autoplay policy:', err.name);
+      });
+    } else if (!stream) {
+      el.srcObject = null;
     }
-  }, [stream, isCameraOn]);
+  }, [stream, isSelf]);
 
   const hasVideoStream = Boolean(
-    stream && stream.getVideoTracks && stream.getVideoTracks().length > 0 && isCameraOn
+    stream &&
+      stream.getVideoTracks &&
+      stream.getVideoTracks().filter((t) => t.readyState === 'live').length > 0 &&
+      isCameraOn
+  );
+
+  /**
+   * Ref callback for the <video> element.
+   * Guarantees srcObject is assigned on every mount and on every distinct stream reference,
+   * even when React's shallow-equality check would skip a useEffect.
+   */
+  const videoRefCallback = useCallback(
+    (el) => {
+      if (!el) return;
+      if (el.srcObject !== stream) {
+        el.srcObject = stream || null;
+      }
+    },
+    [stream]
   );
 
   return (
@@ -29,12 +70,23 @@ export default function VideoTile({
           : 'border-slate-800/90 hover:border-slate-700'
       }`}
     >
+      {/* Hidden audio element — always mounted for remote participants so audio works when camera is off */}
+      {!isSelf && (
+        <audio
+          ref={audioRef}
+          autoPlay
+          playsInline
+          className="hidden"
+          aria-hidden="true"
+        />
+      )}
+
       {/* Video / Camera Feed Element */}
       {isCameraOn ? (
         <div className="relative w-full h-full flex items-center justify-center bg-slate-950">
           {hasVideoStream ? (
             <video
-              ref={videoRef}
+              ref={videoRefCallback}
               autoPlay
               playsInline
               muted={isSelf}

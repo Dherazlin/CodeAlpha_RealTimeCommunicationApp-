@@ -2,8 +2,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { rtcConfig } from '../config/webrtc';
 
 /**
- * Custom hook managing Full-Mesh WebRTC Audio & Video communication for Korus Phase 5
- * Supports multi-participant video meetings (3–6 participants).
+ * Custom hook managing Full-Mesh WebRTC Audio & Video communication for Korus.
+ * Supports multi-participant video meetings (2, 3, 4+ participants).
+ * Phase 1 Architecture Fix:
+ * - Deterministic single shared localMediaPromiseRef
+ * - Idempotent createPeerConnection
+ * - Pre-registered signaling listeners
+ * - Safe late-track attachment & renegotiation loop prevention
+ * - Full preservation of RTCRtpSender screen-sharing track replacement
  *
  * @param {Object} params
  * @param {import('socket.io-client').Socket | null} params.socket - Active authenticated Socket.io client
@@ -17,6 +23,12 @@ export function useWebRTC({ socket, roomId, onNotification }) {
 
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCameraOn, setIsCameraOn] = useState(true);
+  const [isMediaReady, setIsMediaReady] = useState(false);
+
+  // Screen sharing state
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const screenStreamRef = useRef(null);
+  const cameraWasOnBeforeShareRef = useRef(false);
 
   // Permission & Device Status
   const [permissionStatus, setPermissionStatus] = useState('prompt'); // 'prompt' | 'granted' | 'denied' | 'unavailable'
@@ -26,68 +38,188 @@ export function useWebRTC({ socket, roomId, onNotification }) {
   const peerConnectionsRef = useRef(new Map()); // Map<socketId, RTCPeerConnection>
   const candidateQueuesRef = useRef(new Map()); // Map<socketId, RTCIceCandidateInit[]>
   const localStreamRef = useRef(null);
+  const localMediaPromiseRef = useRef(null); // Single shared initialization promise for the lifetime of the meeting
+
+  // Keep stable refs for access inside callbacks without triggering recreation
+  const socketRef = useRef(socket);
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  const roomIdRef = useRef(roomId);
+  useEffect(() => {
+    roomIdRef.current = roomId;
+  }, [roomId]);
+
+  const isCameraOnRef = useRef(isCameraOn);
+  useEffect(() => {
+    isCameraOnRef.current = isCameraOn;
+  }, [isCameraOn]);
+
+  const isScreenSharingRef = useRef(isScreenSharing);
+  useEffect(() => {
+    isScreenSharingRef.current = isScreenSharing;
+  }, [isScreenSharing]);
+
+  const onNotificationRef = useRef(onNotification);
+  useEffect(() => {
+    onNotificationRef.current = onNotification;
+  }, [onNotification]);
 
   /**
-   * Request local camera and microphone access
+   * Attach or replace local tracks on a specific peer connection.
+   * Handles audio and video, preventing duplicate senders.
+   * Crucial: Respects active screen sharing so camera initialization never clobbers screen tracks.
    */
-  const initLocalMedia = useCallback(async () => {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setPermissionStatus('unavailable');
-        setPermissionError('Media devices are not supported on this browser context.');
-        if (onNotification) {
-          onNotification('Camera and microphone are not supported on this browser.');
-        }
-        return null;
-      }
+  const attachLocalTracksToPeer = useCallback((pc, targetSocketId) => {
+    if (!pc || pc.connectionState === 'closed') return;
+    const stream = localStreamRef.current;
+    if (!stream) return;
 
-      console.log('[WebRTC Mesh] Requesting local camera and microphone permissions...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user',
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+    const senders = pc.getSenders();
+    const audioTrack = stream.getAudioTracks()[0];
+    const cameraTrack = stream.getVideoTracks()[0];
 
-      console.log('[WebRTC Mesh] Local MediaStream acquired successfully:', stream.id);
-      localStreamRef.current = stream;
-      setLocalStream(stream);
-      setPermissionStatus('granted');
-      setPermissionError(null);
-      return stream;
-    } catch (err) {
-      console.warn('[WebRTC Mesh] getUserMedia failed:', err.name, err.message);
-
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setPermissionStatus('denied');
-        setPermissionError(
-          'Camera and microphone access was denied. You can still remain in the meeting, but others will not receive your media.'
-        );
-        if (onNotification) {
-          onNotification('Camera and microphone access was denied. You can still join the call.');
-        }
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setPermissionStatus('unavailable');
-        setPermissionError('No camera or microphone found on your device.');
-        if (onNotification) {
-          onNotification('No camera or microphone hardware found.');
+    // 1. Audio track
+    if (audioTrack) {
+      const audioSender = senders.find((s) => s.track && s.track.kind === 'audio');
+      if (audioSender) {
+        if (audioSender.track !== audioTrack) {
+          audioSender.replaceTrack(audioTrack).catch((err) => {
+            console.warn(`[WebRTC Mesh] replaceTrack audio error for ${targetSocketId}:`, err);
+          });
         }
       } else {
-        setPermissionStatus('unavailable');
-        setPermissionError(`Media device error: ${err.message}`);
-        if (onNotification) {
-          onNotification('Unable to access media devices.');
+        try {
+          console.log(`[WebRTC Mesh] Adding audio track to peer ${targetSocketId}`);
+          pc.addTrack(audioTrack, stream);
+        } catch (err) {
+          console.warn(`[WebRTC Mesh] addTrack audio error for ${targetSocketId}:`, err);
         }
       }
-      return null;
     }
-  }, [onNotification]);
+
+    // 2. Video track: inspect active screen sharing first!
+    const activeVideoTrack =
+      isScreenSharingRef.current && screenStreamRef.current
+        ? screenStreamRef.current.getVideoTracks()[0]
+        : cameraTrack;
+
+    if (activeVideoTrack) {
+      const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+      if (videoSender) {
+        if (videoSender.track !== activeVideoTrack) {
+          videoSender.replaceTrack(activeVideoTrack).catch((err) => {
+            console.warn(`[WebRTC Mesh] replaceTrack video error for ${targetSocketId}:`, err);
+          });
+        }
+      } else {
+        try {
+          console.log(
+            `[WebRTC Mesh] Adding video track (${activeVideoTrack.label}) to peer ${targetSocketId}`
+          );
+          pc.addTrack(activeVideoTrack, stream);
+        } catch (err) {
+          console.warn(`[WebRTC Mesh] addTrack video error for ${targetSocketId}:`, err);
+        }
+      }
+    }
+  }, []);
+
+  /**
+   * Retroactively attach local tracks to all existing peer connections.
+   * Invoked when getUserMedia resolves after peers have already been registered.
+   */
+  const attachLocalTracksToExistingPeers = useCallback(
+    (stream) => {
+      if (!stream) return;
+      console.log(
+        `[WebRTC Mesh] Retroactively attaching local tracks to ${peerConnectionsRef.current.size} active peers`
+      );
+      peerConnectionsRef.current.forEach((pc, targetSocketId) => {
+        attachLocalTracksToPeer(pc, targetSocketId);
+      });
+    },
+    [attachLocalTracksToPeer]
+  );
+
+  /**
+   * Single shared local media initialization promise.
+   * Ensures getUserMedia() runs only once per meeting lifecycle without races.
+   */
+  const initLocalMedia = useCallback(async () => {
+    if (localMediaPromiseRef.current) {
+      return localMediaPromiseRef.current;
+    }
+
+    localMediaPromiseRef.current = (async () => {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setPermissionStatus('unavailable');
+          setPermissionError('Media devices are not supported on this browser context.');
+          if (onNotificationRef.current) {
+            onNotificationRef.current('Camera and microphone are not supported on this browser.');
+          }
+          setIsMediaReady(true);
+          return null;
+        }
+
+        console.log('[WebRTC Mesh] Requesting local camera and microphone permissions...');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user',
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        console.log('[WebRTC Mesh] Local MediaStream acquired successfully:', stream.id);
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        setPermissionStatus('granted');
+        setPermissionError(null);
+        setIsMediaReady(true);
+
+        // Retroactively attach tracks to any peers created before getUserMedia resolved
+        attachLocalTracksToExistingPeers(stream);
+
+        return stream;
+      } catch (err) {
+        console.warn('[WebRTC Mesh] getUserMedia failed:', err.name, err.message);
+
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          setPermissionStatus('denied');
+          setPermissionError(
+            'Camera and microphone access was denied. You can still remain in the meeting, but others will not receive your media.'
+          );
+          if (onNotificationRef.current) {
+            onNotificationRef.current('Camera and microphone access was denied. You can still join the call.');
+          }
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          setPermissionStatus('unavailable');
+          setPermissionError('No camera or microphone found on your device.');
+          if (onNotificationRef.current) {
+            onNotificationRef.current('No camera or microphone hardware found.');
+          }
+        } else {
+          setPermissionStatus('unavailable');
+          setPermissionError(`Media device error: ${err.message}`);
+          if (onNotificationRef.current) {
+            onNotificationRef.current('Unable to access media devices.');
+          }
+        }
+        setIsMediaReady(true);
+        return null;
+      }
+    })();
+
+    return localMediaPromiseRef.current;
+  }, [attachLocalTracksToExistingPeers]);
 
   /**
    * Process queued ICE candidates for a specific peer
@@ -106,19 +238,21 @@ export function useWebRTC({ socket, roomId, onNotification }) {
   }, []);
 
   /**
-   * Create and configure RTCPeerConnection for a specific remote peer in the mesh
+   * Create and configure RTCPeerConnection for a remote peer in the mesh.
+   * IDEMPOTENT: If an active peer already exists, reuse it instead of destroying it.
    */
   const createPeerConnection = useCallback(
     (targetSocketId) => {
-      // If a connection already exists for this peer, cleanly close it first
+      if (!targetSocketId) return null;
+
+      // 1. If connection already exists and is active, reuse it
       if (peerConnectionsRef.current.has(targetSocketId)) {
-        console.log(`[WebRTC Mesh] Closing existing RTCPeerConnection for ${targetSocketId} before recreating.`);
-        const oldPc = peerConnectionsRef.current.get(targetSocketId);
-        oldPc.onicecandidate = null;
-        oldPc.ontrack = null;
-        oldPc.onconnectionstatechange = null;
-        oldPc.close();
-        peerConnectionsRef.current.delete(targetSocketId);
+        const existingPc = peerConnectionsRef.current.get(targetSocketId);
+        if (existingPc && existingPc.connectionState !== 'closed') {
+          console.log(`[WebRTC Mesh] Reusing existing RTCPeerConnection for ${targetSocketId}`);
+          attachLocalTracksToPeer(existingPc, targetSocketId);
+          return existingPc;
+        }
       }
 
       console.log(`[WebRTC Mesh] Initializing new RTCPeerConnection for peer: ${targetSocketId}`);
@@ -131,20 +265,19 @@ export function useWebRTC({ socket, roomId, onNotification }) {
 
       setPeerStates((prev) => ({ ...prev, [targetSocketId]: 'connecting' }));
 
-      // Add local media tracks to peer connection
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => {
-          console.log(`[WebRTC Mesh] Adding local ${track.kind} track to peer ${targetSocketId}`);
-          pc.addTrack(track, localStreamRef.current);
-        });
-      }
+      // Attach local media tracks if available
+      attachLocalTracksToPeer(pc, targetSocketId);
 
       // Handle incoming remote media tracks
       pc.ontrack = (event) => {
-        console.log(`[WebRTC Mesh] Remote track (${event.track.kind}) received from peer: ${targetSocketId}`);
+        console.log(
+          `[WebRTC Mesh] Remote track (${event.track.kind}) received from peer: ${targetSocketId}`
+        );
         const [incomingStream] = event.streams;
         if (incomingStream) {
-          console.log(`[WebRTC Mesh] Remote MediaStream attached for peer: ${targetSocketId} (stream: ${incomingStream.id})`);
+          console.log(
+            `[WebRTC Mesh] Remote MediaStream attached for peer: ${targetSocketId} (stream: ${incomingStream.id})`
+          );
           setRemoteStreams((prev) => ({
             ...prev,
             [targetSocketId]: incomingStream,
@@ -154,11 +287,11 @@ export function useWebRTC({ socket, roomId, onNotification }) {
 
       // Handle ICE Candidate generation
       pc.onicecandidate = (event) => {
-        if (event.candidate && socket) {
-          socket.emit('webrtc-ice-candidate', {
+        if (event.candidate && socketRef.current) {
+          socketRef.current.emit('webrtc-ice-candidate', {
             targetSocketId,
             candidate: event.candidate,
-            roomId,
+            roomId: roomIdRef.current,
           });
         }
       };
@@ -187,13 +320,39 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         console.log(`[WebRTC Mesh] Peer ${targetSocketId} ICE state: ${pc.iceConnectionState}`);
       };
 
+      // Safe renegotiation handling to avoid recursive offer loops
+      let isNegotiating = false;
+      pc.onnegotiationneeded = async () => {
+        if (isNegotiating || pc.signalingState !== 'stable') {
+          return;
+        }
+        try {
+          isNegotiating = true;
+          console.log(`[WebRTC Mesh] onnegotiationneeded for peer: ${targetSocketId}`);
+          const offer = await pc.createOffer();
+          if (pc.signalingState !== 'stable') return;
+          await pc.setLocalDescription(offer);
+          if (socketRef.current) {
+            socketRef.current.emit('webrtc-offer', {
+              targetSocketId,
+              offer,
+              roomId: roomIdRef.current,
+            });
+          }
+        } catch (err) {
+          console.warn(`[WebRTC Mesh] Renegotiation error for ${targetSocketId}:`, err);
+        } finally {
+          isNegotiating = false;
+        }
+      };
+
       return pc;
     },
-    [socket, roomId]
+    [attachLocalTracksToPeer]
   );
 
   /**
-   * Deterministic Offer: Existing participant initiates WebRTC Offer to a newly joined peer
+   * Deterministic Offer: Existing participant initiates WebRTC Offer to newly joined peer
    */
   const initiateOffer = useCallback(
     async (targetSocketId) => {
@@ -202,6 +361,7 @@ export function useWebRTC({ socket, roomId, onNotification }) {
       try {
         console.log(`[WebRTC Mesh] Initiating WebRTC offer to peer: ${targetSocketId}`);
         const pc = createPeerConnection(targetSocketId);
+        if (!pc) return;
 
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
@@ -211,20 +371,22 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         await pc.setLocalDescription(offer);
         console.log(`[WebRTC Mesh] Local offer description set for peer ${targetSocketId}, relaying via Socket.io`);
 
-        socket.emit('webrtc-offer', {
-          targetSocketId,
-          offer,
-          roomId,
-        });
+        if (socketRef.current) {
+          socketRef.current.emit('webrtc-offer', {
+            targetSocketId,
+            offer,
+            roomId: roomIdRef.current,
+          });
+        }
       } catch (err) {
         console.error(`[WebRTC Mesh] Failed to initiate offer to peer ${targetSocketId}:`, err);
       }
     },
-    [createPeerConnection, socket, roomId]
+    [createPeerConnection]
   );
 
   /**
-   * Responder: Receive Offer from an existing participant, create and send Answer
+   * Responder: Receive Offer from existing participant, create and send Answer
    */
   const handleReceiveOffer = useCallback(
     async ({ senderSocketId, offer }) => {
@@ -233,6 +395,7 @@ export function useWebRTC({ socket, roomId, onNotification }) {
       try {
         console.log(`[WebRTC Mesh] Handling received offer from peer: ${senderSocketId}`);
         const pc = createPeerConnection(senderSocketId);
+        if (!pc) return;
 
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         console.log(`[WebRTC Mesh] Remote description (offer) set for peer ${senderSocketId}`);
@@ -243,16 +406,18 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         await pc.setLocalDescription(answer);
         console.log(`[WebRTC Mesh] Local answer description set for peer ${senderSocketId}, relaying via Socket.io`);
 
-        socket.emit('webrtc-answer', {
-          targetSocketId: senderSocketId,
-          answer,
-          roomId,
-        });
+        if (socketRef.current) {
+          socketRef.current.emit('webrtc-answer', {
+            targetSocketId: senderSocketId,
+            answer,
+            roomId: roomIdRef.current,
+          });
+        }
       } catch (err) {
         console.error(`[WebRTC Mesh] Failed to handle received offer from peer ${senderSocketId}:`, err);
       }
     },
-    [createPeerConnection, processCandidateQueue, socket, roomId]
+    [createPeerConnection, processCandidateQueue]
   );
 
   /**
@@ -304,6 +469,25 @@ export function useWebRTC({ socket, roomId, onNotification }) {
   }, []);
 
   /**
+   * Explicit synchronous binding of WebRTC signaling listeners to a socket instance.
+   * Enables pre-registering listeners before socket.connect() / join-room.
+   */
+  const attachSignalingListeners = useCallback(
+    (socketInstance) => {
+      if (!socketInstance) return;
+      console.log(`[WebRTC Mesh] Attaching signaling listeners to socket instance: ${socketInstance.id || 'unconnected'}`);
+      socketInstance.off('webrtc-offer', handleReceiveOffer);
+      socketInstance.off('webrtc-answer', handleReceiveAnswer);
+      socketInstance.off('webrtc-ice-candidate', handleReceiveIceCandidate);
+
+      socketInstance.on('webrtc-offer', handleReceiveOffer);
+      socketInstance.on('webrtc-answer', handleReceiveAnswer);
+      socketInstance.on('webrtc-ice-candidate', handleReceiveIceCandidate);
+    },
+    [handleReceiveOffer, handleReceiveAnswer, handleReceiveIceCandidate]
+  );
+
+  /**
    * Cleanly close and remove a single peer connection (e.g. when participant leaves)
    */
   const closePeerConnection = useCallback((targetSocketId) => {
@@ -315,6 +499,7 @@ export function useWebRTC({ socket, roomId, onNotification }) {
       pc.onicecandidate = null;
       pc.ontrack = null;
       pc.onconnectionstatechange = null;
+      pc.onnegotiationneeded = null;
       pc.close();
       peerConnectionsRef.current.delete(targetSocketId);
     }
@@ -347,12 +532,11 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         });
         setIsMicOn(nextState);
 
-        // Sync state to peers via Socket.io
-        if (socket) {
-          socket.emit('user-toggle-media', {
-            roomId,
+        if (socketRef.current) {
+          socketRef.current.emit('user-toggle-media', {
+            roomId: roomIdRef.current,
             isMicOn: nextState,
-            isCameraOn,
+            isCameraOn: isCameraOnRef.current,
           });
         }
         return nextState;
@@ -361,7 +545,7 @@ export function useWebRTC({ socket, roomId, onNotification }) {
     const fallback = !isMicOn;
     setIsMicOn(fallback);
     return fallback;
-  }, [isMicOn, isCameraOn, socket, roomId]);
+  }, [isMicOn]);
 
   /**
    * Toggle local camera track
@@ -376,10 +560,9 @@ export function useWebRTC({ socket, roomId, onNotification }) {
         });
         setIsCameraOn(nextState);
 
-        // Sync state to peers via Socket.io
-        if (socket) {
-          socket.emit('user-toggle-media', {
-            roomId,
+        if (socketRef.current) {
+          socketRef.current.emit('user-toggle-media', {
+            roomId: roomIdRef.current,
             isMicOn,
             isCameraOn: nextState,
           });
@@ -390,15 +573,184 @@ export function useWebRTC({ socket, roomId, onNotification }) {
     const fallback = !isCameraOn;
     setIsCameraOn(fallback);
     return fallback;
-  }, [isCameraOn, isMicOn, socket, roomId]);
+  }, [isCameraOn, isMicOn]);
 
   /**
-   * Clean up all WebRTC peer connections and local media tracks
+   * Internal: replace the video sender track across all active peer connections.
+   * @param {MediaStreamTrack|null} track - The track to send, or null to send silence/black
+   */
+  const replaceVideoTrackOnAllPeers = useCallback((track) => {
+    peerConnectionsRef.current.forEach((pc, socketId) => {
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender) {
+        sender
+          .replaceTrack(track)
+          .then(() => {
+            console.log(
+              `[WebRTC Screen Share] Replaced video track on peer ${socketId} with: ${
+                track ? track.label : 'null'
+              }`
+            );
+          })
+          .catch((err) => {
+            console.warn(`[WebRTC Screen Share] replaceTrack failed for peer ${socketId}:`, err);
+          });
+      }
+    });
+  }, []);
+
+  /**
+   * Stop screen sharing and restore the camera track.
+   * Safe to call from track.onended (browser stop button) or from user click.
+   */
+  const stopScreenShare = useCallback(
+    (restoreCamera) => {
+      console.log('[WebRTC Screen Share] Stopping screen share...');
+
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((track) => {
+          track.onended = null;
+          track.stop();
+        });
+        screenStreamRef.current = null;
+      }
+
+      const shouldRestoreCamera =
+        restoreCamera !== undefined ? restoreCamera : cameraWasOnBeforeShareRef.current;
+
+      if (shouldRestoreCamera && localStreamRef.current) {
+        const cameraTrack = localStreamRef.current.getVideoTracks()[0];
+        if (cameraTrack) {
+          cameraTrack.enabled = true;
+          replaceVideoTrackOnAllPeers(cameraTrack);
+          setIsCameraOn(true);
+          console.log('[WebRTC Screen Share] Camera track restored after screen share stop.');
+        }
+      } else {
+        if (localStreamRef.current) {
+          const cameraTrack = localStreamRef.current.getVideoTracks()[0];
+          if (cameraTrack) {
+            cameraTrack.enabled = false;
+            replaceVideoTrackOnAllPeers(cameraTrack);
+          }
+        }
+        setIsCameraOn(false);
+      }
+
+      if (socketRef.current) {
+        socketRef.current.emit('screen-share-stop', { roomId: roomIdRef.current });
+      }
+
+      setIsScreenSharing(false);
+      cameraWasOnBeforeShareRef.current = false;
+    },
+    [replaceVideoTrackOnAllPeers]
+  );
+
+  /**
+   * Start screen sharing.
+   * Requests server approval first (one-sharer-per-room), then calls getDisplayMedia().
+   * Uses RTCRtpSender.replaceTrack() — no new peer connections created.
+   */
+  const startScreenShare = useCallback(async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      const msg = 'Screen sharing is not supported by this browser.';
+      if (onNotificationRef.current) onNotificationRef.current(msg);
+      return { success: false, error: msg };
+    }
+
+    const currentSocket = socketRef.current;
+    if (!currentSocket) {
+      return { success: false, error: 'Not connected to meeting.' };
+    }
+
+    if (isScreenSharing) {
+      stopScreenShare();
+      return { success: true };
+    }
+
+    return new Promise((resolve) => {
+      const onStarted = async (data) => {
+        currentSocket.off('screen-share-denied', onDenied);
+
+        try {
+          console.log('[WebRTC Screen Share] Server approved screen share. Calling getDisplayMedia...');
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+              displaySurface: 'monitor',
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              frameRate: { ideal: 30 },
+            },
+            audio: false,
+          });
+
+          screenStreamRef.current = screenStream;
+          const screenTrack = screenStream.getVideoTracks()[0];
+
+          cameraWasOnBeforeShareRef.current = isCameraOnRef.current;
+          replaceVideoTrackOnAllPeers(screenTrack);
+
+          screenTrack.onended = () => {
+            console.log('[WebRTC Screen Share] Browser native stop triggered (track.onended).');
+            stopScreenShare(cameraWasOnBeforeShareRef.current);
+          };
+
+          setIsScreenSharing(true);
+          console.log('[WebRTC Screen Share] Screen sharing started successfully.');
+          resolve({ success: true, stream: screenStream });
+        } catch (err) {
+          console.warn('[WebRTC Screen Share] getDisplayMedia failed:', err.name, err.message);
+          currentSocket.emit('screen-share-stop', { roomId: roomIdRef.current });
+
+          let userMessage = 'Screen sharing failed.';
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            userMessage = 'Screen sharing permission was denied.';
+          } else if (err.name === 'NotSupportedError') {
+            userMessage = 'Screen sharing is not supported by this browser.';
+          } else if (err.name === 'AbortError') {
+            userMessage = null;
+            currentSocket.emit('screen-share-stop', { roomId: roomIdRef.current });
+          }
+
+          if (userMessage && onNotificationRef.current) onNotificationRef.current(userMessage);
+          resolve({ success: false, error: userMessage });
+        }
+      };
+
+      const onDenied = ({ reason, sharerName }) => {
+        currentSocket.off('screen-share-started', onStarted);
+        console.log('[WebRTC Screen Share] Screen share denied by server:', reason);
+        resolve({ success: false, error: reason, denied: true, sharerName });
+      };
+
+      currentSocket.once('screen-share-started', onStarted);
+      currentSocket.once('screen-share-denied', onDenied);
+
+      currentSocket.emit('screen-share-request', { roomId: roomIdRef.current });
+
+      setTimeout(() => {
+        currentSocket.off('screen-share-started', onStarted);
+        currentSocket.off('screen-share-denied', onDenied);
+        resolve({ success: false, error: 'Screen share request timed out.' });
+      }, 8000);
+    });
+  }, [isScreenSharing, stopScreenShare, replaceVideoTrackOnAllPeers]);
+
+  /**
+   * Complete WebRTC cleanup on component unmount
    */
   const cleanup = useCallback(() => {
     console.log('[WebRTC Mesh] Executing complete WebRTC cleanup for all mesh peers...');
 
-    // Stop all local tracks
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
+      screenStreamRef.current = null;
+    }
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         console.log(`[WebRTC Mesh] Stopping local ${track.kind} track`);
@@ -406,13 +758,14 @@ export function useWebRTC({ socket, roomId, onNotification }) {
       });
       localStreamRef.current = null;
     }
+    localMediaPromiseRef.current = null;
 
-    // Close all peer connections
     peerConnectionsRef.current.forEach((pc, socketId) => {
       console.log(`[WebRTC Mesh] Closing peer connection for: ${socketId}`);
       pc.onicecandidate = null;
       pc.ontrack = null;
       pc.onconnectionstatechange = null;
+      pc.onnegotiationneeded = null;
       pc.close();
     });
 
@@ -422,9 +775,11 @@ export function useWebRTC({ socket, roomId, onNotification }) {
     setLocalStream(null);
     setRemoteStreams({});
     setPeerStates({});
+    setIsScreenSharing(false);
+    setIsMediaReady(false);
   }, []);
 
-  // Initialize local media on mount
+  // Initialize local media on initial hook mount
   useEffect(() => {
     initLocalMedia();
 
@@ -433,20 +788,17 @@ export function useWebRTC({ socket, roomId, onNotification }) {
     };
   }, [initLocalMedia, cleanup]);
 
-  // Bind Socket.io Signalling Listeners
+  // Bind Socket.io Signalling Listeners if socket prop changes
   useEffect(() => {
     if (!socket) return;
-
-    socket.on('webrtc-offer', handleReceiveOffer);
-    socket.on('webrtc-answer', handleReceiveAnswer);
-    socket.on('webrtc-ice-candidate', handleReceiveIceCandidate);
+    attachSignalingListeners(socket);
 
     return () => {
       socket.off('webrtc-offer', handleReceiveOffer);
       socket.off('webrtc-answer', handleReceiveAnswer);
       socket.off('webrtc-ice-candidate', handleReceiveIceCandidate);
     };
-  }, [socket, handleReceiveOffer, handleReceiveAnswer, handleReceiveIceCandidate]);
+  }, [socket, attachSignalingListeners, handleReceiveOffer, handleReceiveAnswer, handleReceiveIceCandidate]);
 
   return {
     localStream,
@@ -454,12 +806,21 @@ export function useWebRTC({ socket, roomId, onNotification }) {
     peerStates,
     isMicOn,
     isCameraOn,
+    isMediaReady,
     permissionStatus,
     permissionError,
+    isScreenSharing,
+    initLocalMedia,
     initiateOffer,
+    handleReceiveOffer,
+    handleReceiveAnswer,
+    handleReceiveIceCandidate,
+    attachSignalingListeners,
     closePeerConnection,
     toggleMic,
     toggleCamera,
+    startScreenShare,
+    stopScreenShare,
     cleanup,
   };
 }

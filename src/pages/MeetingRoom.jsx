@@ -149,7 +149,9 @@ export default function MeetingRoom() {
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
-  const [isScreenShareOpen, setIsScreenShareOpen] = useState(false);
+  const [screenSharingParticipant, setScreenSharingParticipant] = useState(null);
+  const [screenShareStream, setScreenShareStream] = useState(null);
+  const [screenShareError, setScreenShareError] = useState(null);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
@@ -170,25 +172,52 @@ export default function MeetingRoom() {
     }, 4000);
   }, []);
 
-  // WebRTC Hook for Multi-Peer Mesh Audio & Video (3-6 participants)
+  // WebRTC Hook for Multi-Peer Mesh Audio & Video (2–6 participants)
   const {
     localStream,
     remoteStreams,
     peerStates,
     isMicOn,
     isCameraOn,
+    isMediaReady,
     permissionStatus,
     permissionError,
+    isScreenSharing,
+    initLocalMedia,
     initiateOffer,
+    attachSignalingListeners,
     closePeerConnection,
     toggleMic,
     toggleCamera,
+    startScreenShare,
+    stopScreenShare,
     cleanup: cleanupWebRTC,
   } = useWebRTC({
     socket: activeSocket,
     roomId: cleanRoomId,
     onNotification: showNotification,
   });
+
+  // Stable refs for values accessed inside socket callbacks to avoid re-running the socket effect
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  const isChatOpenRef = useRef(isChatOpen);
+  useEffect(() => {
+    isChatOpenRef.current = isChatOpen;
+  }, [isChatOpen]);
+
+  const isMicOnRef = useRef(isMicOn);
+  useEffect(() => {
+    isMicOnRef.current = isMicOn;
+  }, [isMicOn]);
+
+  const isCameraOnRef = useRef(isCameraOn);
+  useEffect(() => {
+    isCameraOnRef.current = isCameraOn;
+  }, [isCameraOn]);
 
   // Socket.io Lifecycle & Real-Time Presence
   useEffect(() => {
@@ -202,13 +231,19 @@ export default function MeetingRoom() {
     socketRef.current = socket;
     setActiveSocket(socket);
 
-    // Connect socket
-    socket.connect();
+    // 1. Immediately attach WebRTC signaling listeners before connect/join-room
+    attachSignalingListeners(socket);
 
-    // On successful connection
-    socket.on('connect', () => {
-      console.log(`[MeetingRoom] Connected to Socket.io (${socket.id}). Joining room: ${cleanRoomId}`);
+    // 2. On connect, ensure local media is ready before emitting join-room
+    socket.on('connect', async () => {
+      console.log(`[MeetingRoom] Connected to Socket.io (${socket.id}). Ensuring local media readiness...`);
       setSocketConnectionStatus('connected');
+      try {
+        await initLocalMedia();
+      } catch (err) {
+        console.warn('[MeetingRoom] Media initialization error before join-room:', err);
+      }
+      console.log(`[MeetingRoom] Emitting join-room: ${cleanRoomId}`);
       socket.emit('join-room', { roomId: cleanRoomId });
     });
 
@@ -230,26 +265,35 @@ export default function MeetingRoom() {
       setSocketConnectionStatus('reconnecting');
     });
 
-    socket.io.on('reconnect', () => {
+    socket.io.on('reconnect', async () => {
       console.log('[MeetingRoom] Reconnected. Rejoining room:', cleanRoomId);
       setSocketConnectionStatus('connected');
+      try {
+        await initLocalMedia();
+      } catch (err) {
+        console.warn('[MeetingRoom] Media initialization error on reconnect:', err);
+      }
       socket.emit('join-room', { roomId: cleanRoomId });
     });
 
     // Receive initial room participants snapshot
-    socket.on('room-users', ({ participants: roomUsers }) => {
+    socket.on('room-users', ({ participants: roomUsers, screenSharer }) => {
       console.log('[MeetingRoom] Received room users snapshot:', roomUsers);
+      if (screenSharer) {
+        setScreenSharingParticipant(screenSharer);
+      }
       setParticipants(
         roomUsers.map((p) => {
           const isSelf = p.socketId === socket.id;
-          const displayName = isSelf && user?.name ? user.name : (p.name || 'Participant');
+          const currentUser = userRef.current;
+          const displayName = isSelf && currentUser?.name ? currentUser.name : (p.name || 'Participant');
           return {
             ...p,
             id: p.userId || p.id,
             userId: p.userId || p.id,
             name: displayName,
-            email: isSelf && user?.email ? user.email : p.email,
-            avatar: isSelf && user?.avatar ? user.avatar : p.avatar,
+            email: isSelf && currentUser?.email ? currentUser.email : p.email,
+            avatar: isSelf && currentUser?.avatar ? currentUser.avatar : p.avatar,
             role: p.role || (p.isHost ? 'Host' : 'Participant'),
             isHost: Boolean(p.isHost),
             isSelf,
@@ -261,8 +305,8 @@ export default function MeetingRoom() {
                   .join('')
                   .toUpperCase()
               : 'U',
-            isMicOn: isSelf ? isMicOn : (p.isMicOn ?? true),
-            isCameraOn: isSelf ? isCameraOn : (p.isCameraOn ?? true),
+            isMicOn: isSelf ? isMicOnRef.current : (p.isMicOn ?? true),
+            isCameraOn: isSelf ? isCameraOnRef.current : (p.isCameraOn ?? true),
             isSpeaking: false,
           };
         })
@@ -270,7 +314,7 @@ export default function MeetingRoom() {
     });
 
     // Another participant joined the room -> existing user initiates WebRTC offer
-    socket.on('participant-joined', ({ participant }) => {
+    socket.on('participant-joined', async ({ participant }) => {
       console.log('[MeetingRoom] Participant joined room:', participant);
       if (participant.socketId === socket.id) return;
 
@@ -326,6 +370,9 @@ export default function MeetingRoom() {
 
       showNotification(`${participant.name} joined the meeting`);
 
+      // Ensure local media has initialized before initiating offer
+      await initLocalMedia();
+
       // Deterministic WebRTC negotiation: Existing participant initiates the offer to the newly joined peer
       console.log(`[MeetingRoom] Initiating WebRTC mesh offer to new participant: ${participant.socketId}`);
       initiateOffer(participant.socketId);
@@ -336,8 +383,28 @@ export default function MeetingRoom() {
       console.log(`[MeetingRoom] Participant left (${socketId}): ${userName}`);
       closePeerConnection(socketId);
       setParticipants((prev) => prev.filter((p) => p.socketId !== socketId));
+      setScreenSharingParticipant((prev) => (prev && prev.socketId === socketId ? null : prev));
       if (userName) {
         showNotification(`${userName} left the meeting`);
+      }
+    });
+
+    // Screen sharing started broadcast
+    socket.on('screen-share-started', ({ socketId, userId, userName }) => {
+      console.log('[MeetingRoom] Screen share started by:', socketId, userName);
+      setScreenSharingParticipant({ socketId, userId, userName });
+      if (socketRef.current && socketId !== socketRef.current.id) {
+        showNotification(`${userName} started sharing their screen`);
+      }
+    });
+
+    // Screen sharing stopped broadcast
+    socket.on('screen-share-stopped', ({ socketId, userName }) => {
+      console.log('[MeetingRoom] Screen share stopped:', socketId, userName);
+      setScreenSharingParticipant((prev) => (prev && prev.socketId === socketId ? null : prev));
+      setScreenShareStream(null);
+      if (userName && socketRef.current && socketId !== socketRef.current.id) {
+        showNotification(`${userName} stopped sharing their screen`);
       }
     });
 
@@ -360,7 +427,8 @@ export default function MeetingRoom() {
     // Real-time chat message broadcast received
     socket.on('receive-message', (msg) => {
       console.log('[MeetingRoom] Received chat message:', msg);
-      const isSelf = msg.userId === user?.id || (socketRef.current && msg.socketId === socketRef.current.id);
+      const currentUser = userRef.current;
+      const isSelf = msg.userId === currentUser?.id || (socketRef.current && msg.socketId === socketRef.current.id);
 
       setMessages((prev) => {
         if (prev.some((m) => m.id === msg.id)) return prev;
@@ -383,7 +451,7 @@ export default function MeetingRoom() {
         ];
       });
 
-      if (!isSelf && !isChatOpen) {
+      if (!isSelf && !isChatOpenRef.current) {
         setHasUnreadChat(true);
       }
     });
@@ -404,6 +472,9 @@ export default function MeetingRoom() {
       }, 1200);
     });
 
+    // Connect socket now that all listeners are bound
+    socket.connect();
+
     // Cleanup on unmount or room change
     return () => {
       console.log(`[MeetingRoom] Cleaning up socket connection for room: ${cleanRoomId}`);
@@ -416,7 +487,7 @@ export default function MeetingRoom() {
       socketRef.current = null;
       setActiveSocket(null);
     };
-  }, [cleanRoomId, token, user?.id, user?.name, user?.email, user?.avatar, initiateOffer, closePeerConnection, showNotification, isChatOpen, cleanupWebRTC, navigate]);
+  }, [cleanRoomId, token, attachSignalingListeners, initiateOffer, closePeerConnection, cleanupWebRTC, initLocalMedia, showNotification, navigate]);
 
   // Keep self participant media state in sync with useWebRTC hook
   useEffect(() => {
@@ -424,6 +495,60 @@ export default function MeetingRoom() {
       prev.map((p) => (p.isSelf ? { ...p, isMicOn, isCameraOn } : p))
     );
   }, [isMicOn, isCameraOn]);
+
+  // Synchronize screen sharing state if sharing ends from browser native controls
+  useEffect(() => {
+    if (!isScreenSharing) {
+      setScreenShareStream(null);
+      setScreenSharingParticipant((prev) => {
+        if (prev && (prev.isSelf || (socketRef.current && prev.socketId === socketRef.current.id))) {
+          return null;
+        }
+        return prev;
+      });
+    }
+  }, [isScreenSharing]);
+
+  // Handle start screen sharing
+  const handleStartScreenShare = async () => {
+    try {
+      const result = await startScreenShare();
+      if (!result) return;
+
+      if (result.success && result.stream) {
+        setScreenShareStream(result.stream);
+        setScreenSharingParticipant({
+          socketId: socketRef.current?.id || 'local_pending',
+          userId: user?.id,
+          userName: user?.name || 'You',
+          isSelf: true,
+        });
+        showNotification('You are sharing your screen');
+      } else if (result.denied) {
+        setScreenShareError(
+          result.error || `${result.sharerName || 'Another participant'} is already sharing their screen.`
+        );
+      } else if (result.error) {
+        showNotification(result.error);
+      }
+    } catch (err) {
+      console.error('[MeetingRoom] Error in handleStartScreenShare:', err);
+      showNotification('Unable to share screen.');
+    }
+  };
+
+  // Handle stop screen sharing
+  const handleStopScreenShare = () => {
+    stopScreenShare();
+    setScreenShareStream(null);
+    setScreenSharingParticipant((prev) => {
+      if (prev && (prev.isSelf || (socketRef.current && prev.socketId === socketRef.current.id))) {
+        return null;
+      }
+      return prev;
+    });
+    showNotification('You stopped sharing your screen');
+  };
 
   // Handle local microphone toggle
   const handleToggleMic = () => {
@@ -573,6 +698,32 @@ export default function MeetingRoom() {
         </div>
       )}
 
+      {/* Screen Sharing Active Banner */}
+      {screenSharingParticipant && (
+        <div
+          className="mx-4 mt-2 px-3.5 py-2 bg-brand-950/85 border border-brand-800/80 text-brand-200 text-xs rounded-xl flex items-center justify-between z-30 shrink-0 shadow-md backdrop-blur-md animate-in fade-in"
+          role="status"
+        >
+          <div className="flex items-center gap-2 truncate">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="font-medium truncate">
+              {screenSharingParticipant.socketId === socketRef.current?.id || isScreenSharing
+                ? 'You are presenting your screen to everyone in this meeting.'
+                : `${screenSharingParticipant.userName || 'A participant'} is currently presenting their screen.`}
+            </span>
+          </div>
+          {(screenSharingParticipant.socketId === socketRef.current?.id || isScreenSharing) && (
+            <button
+              type="button"
+              onClick={handleStopScreenShare}
+              className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer ml-2 shrink-0 active:scale-95"
+            >
+              Stop Sharing
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Main Video Grid Area with Real WebRTC Mesh Streams */}
       <div className="flex-1 flex min-h-0 relative overflow-hidden">
         <VideoGrid
@@ -580,6 +731,10 @@ export default function MeetingRoom() {
           localStream={localStream}
           remoteStreams={remoteStreams}
           peerStates={peerStates}
+          screenShareStream={screenShareStream}
+          screenSharingParticipant={screenSharingParticipant}
+          isScreenSharing={isScreenSharing}
+          onStopScreenShare={handleStopScreenShare}
         />
 
         {/* Slide-out Participant Panel */}
@@ -618,16 +773,19 @@ export default function MeetingRoom() {
         isChatOpen={isChatOpen}
         onToggleChat={handleToggleChat}
         hasUnreadChat={hasUnreadChat}
-        onOpenScreenShare={() => setIsScreenShareOpen(true)}
+        isScreenSharing={isScreenSharing}
+        onStartScreenShare={handleStartScreenShare}
+        onStopScreenShare={handleStopScreenShare}
         isMoreOpen={isMoreOpen}
         onToggleMore={() => setIsMoreOpen((prev) => !prev)}
         onLeaveMeeting={() => setIsLeaveModalOpen(true)}
       />
 
-      {/* Screen Share Preview Modal */}
+      {/* Screen Share Error / Notice Dialog */}
       <ScreenShareModal
-        isOpen={isScreenShareOpen}
-        onClose={() => setIsScreenShareOpen(false)}
+        isOpen={Boolean(screenShareError)}
+        onClose={() => setScreenShareError(null)}
+        message={screenShareError}
       />
 
       {/* Leave Meeting Confirmation Modal */}

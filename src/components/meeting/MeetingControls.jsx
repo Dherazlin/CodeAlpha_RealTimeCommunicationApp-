@@ -7,6 +7,7 @@ import {
   Users,
   MessageSquare,
   ScreenShare,
+  ScreenShareOff,
   MoreVertical,
   PhoneOff,
 } from 'lucide-react';
@@ -22,11 +23,21 @@ export default function MeetingControls({
   isChatOpen,
   onToggleChat,
   hasUnreadChat = false,
-  onOpenScreenShare,
+  isScreenSharing = false,
+  onStartScreenShare,
+  onStopScreenShare,
   isMoreOpen,
   onToggleMore,
   onLeaveMeeting,
 }) {
+  const handleScreenShareClick = () => {
+    if (isScreenSharing) {
+      onStopScreenShare?.();
+    } else {
+      onStartScreenShare?.();
+    }
+  };
+
   return (
     <div className="h-20 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-4 flex items-center justify-between z-30 shrink-0 select-none">
       {/* Left filler for centering alignment on desktop */}
@@ -68,15 +79,27 @@ export default function MeetingControls({
 
         <div className="h-6 w-px bg-slate-800 mx-1 hidden sm:block" />
 
-        {/* Screen Share Mock Button */}
+        {/* Screen Share Toggle — real functionality */}
         <button
           type="button"
-          onClick={onOpenScreenShare}
-          className="flex flex-col sm:flex-row items-center justify-center gap-1 p-2.5 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-medium bg-slate-800/80 hover:bg-slate-800 text-slate-200 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-950"
-          aria-label="Share screen"
+          id="screen-share-btn"
+          onClick={handleScreenShareClick}
+          className={`flex flex-col sm:flex-row items-center justify-center gap-1 p-2.5 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-semibold transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-950 ${
+            isScreenSharing
+              ? 'bg-blue-600 hover:bg-blue-700 text-white focus:ring-blue-500 shadow-md ring-2 ring-blue-500/40'
+              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200 hover:text-white focus:ring-slate-500'
+          }`}
+          aria-label={isScreenSharing ? 'Stop screen sharing' : 'Share your screen'}
+          title={isScreenSharing ? 'Stop sharing your screen' : 'Share your screen'}
         >
-          <ScreenShare className="w-5 h-5" />
-          <span className="hidden md:inline">Share</span>
+          {isScreenSharing ? (
+            <ScreenShareOff className="w-5 h-5" />
+          ) : (
+            <ScreenShare className="w-5 h-5" />
+          )}
+          <span className="hidden md:inline">
+            {isScreenSharing ? 'Stop Sharing' : 'Share'}
+          </span>
         </button>
 
         {/* Participants Panel Toggle */}

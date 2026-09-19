@@ -10,6 +10,12 @@ const rooms = new Map();
 const MAX_PARTICIPANTS = 6;
 
 /**
+ * In-memory screen sharing state per room
+ * Map<roomId, { socketId, userId, userName }>
+ */
+const screenSharers = new Map();
+
+/**
  * Configure and initialize Socket.io handlers
  * @param {import('socket.io').Server} io
  */
@@ -163,6 +169,7 @@ export function setupSocketHandlers(io) {
         socket.emit('room-users', {
           roomId: cleanRoomId,
           participants: allParticipants,
+          screenSharer: screenSharers.get(cleanRoomId) || null,
         });
 
         // Broadcast to all other participants in the room that a new participant has joined
@@ -314,6 +321,18 @@ export function setupSocketHandlers(io) {
             `[Socket.io] User "${socket.user?.name}" left room "${cleanRoomId}". Remaining in room: ${roomParticipants.size}`
           );
 
+          // If the leaving participant was the active screen sharer, clear and notify room
+          if (screenSharers.has(cleanRoomId) && screenSharers.get(cleanRoomId).socketId === socket.id) {
+            screenSharers.delete(cleanRoomId);
+            console.log(`[Socket.io] Active screen sharer "${socket.user?.name}" left room "${cleanRoomId}". Clearing screen share.`);
+            socket.to(cleanRoomId).emit('screen-share-stopped', {
+              roomId: cleanRoomId,
+              socketId: socket.id,
+              userId: socket.user?.id,
+              userName: socket.user?.name,
+            });
+          }
+
           // Update leftAt in MongoDB for this participant
           try {
             const meeting = await Meeting.findOne({ roomId: cleanRoomId });
@@ -340,9 +359,10 @@ export function setupSocketHandlers(io) {
             remainingCount: roomParticipants.size,
           });
 
-          // If room is now empty in memory, clean up map
+          // If room is now empty in memory, clean up maps
           if (roomParticipants.size === 0) {
             rooms.delete(cleanRoomId);
+            screenSharers.delete(cleanRoomId);
             console.log(`[Socket.io] Room "${cleanRoomId}" is now empty and removed from transient memory.`);
           }
         }
@@ -353,6 +373,80 @@ export function setupSocketHandlers(io) {
         currentRoomId = null;
       }
     };
+
+    /**
+     * Screen Share: Request to start sharing
+     * Server enforces one-sharer-per-room rule
+     */
+    socket.on('screen-share-request', ({ roomId }) => {
+      const cleanRoomId = (roomId || currentRoomId || '').trim().toUpperCase();
+      if (!cleanRoomId || !rooms.has(cleanRoomId)) {
+        socket.emit('screen-share-denied', { reason: 'Room not found.' });
+        return;
+      }
+
+      // Ensure the requesting socket is actually in the room
+      const roomParticipants = rooms.get(cleanRoomId);
+      if (!roomParticipants.has(socket.id)) {
+        socket.emit('screen-share-denied', { reason: 'You are not in this room.' });
+        return;
+      }
+
+      // Check if someone is already sharing
+      if (screenSharers.has(cleanRoomId)) {
+        const currentSharer = screenSharers.get(cleanRoomId);
+        console.log(
+          `[Socket.io] Screen share denied for "${socket.user.name}" — "${currentSharer.userName}" is already sharing in room "${cleanRoomId}".`
+        );
+        socket.emit('screen-share-denied', {
+          reason: `${currentSharer.userName} is already sharing their screen.`,
+          sharerName: currentSharer.userName,
+        });
+        return;
+      }
+
+      // Register this socket as the active screen sharer
+      screenSharers.set(cleanRoomId, {
+        socketId: socket.id,
+        userId: socket.user.id,
+        userName: socket.user.name,
+      });
+
+      console.log(
+        `[Socket.io] Screen share started by "${socket.user.name}" in room "${cleanRoomId}".`
+      );
+
+      // Notify everyone in the room (including the sharer) that sharing has started
+      io.to(cleanRoomId).emit('screen-share-started', {
+        roomId: cleanRoomId,
+        socketId: socket.id,
+        userId: socket.user.id,
+        userName: socket.user.name,
+      });
+    });
+
+    /**
+     * Screen Share: Stop sharing
+     */
+    socket.on('screen-share-stop', ({ roomId }) => {
+      const cleanRoomId = (roomId || currentRoomId || '').trim().toUpperCase();
+      if (!cleanRoomId) return;
+
+      // Only the active sharer can stop sharing
+      if (screenSharers.has(cleanRoomId) && screenSharers.get(cleanRoomId).socketId === socket.id) {
+        screenSharers.delete(cleanRoomId);
+        console.log(
+          `[Socket.io] Screen share stopped by "${socket.user.name}" in room "${cleanRoomId}".`
+        );
+
+        io.to(cleanRoomId).emit('screen-share-stopped', {
+          roomId: cleanRoomId,
+          socketId: socket.id,
+          userId: socket.user.id,
+          userName: socket.user.name,
+        });
+      }
+    });
 
     /**
      * Handle explicit leave-room request
@@ -397,8 +491,9 @@ export function setupSocketHandlers(io) {
           message: 'The meeting has been ended by the host.',
         });
 
-        // Clean up transient memory
+        // Clean up transient memory (including any active screen share)
         rooms.delete(cleanRoomId);
+        screenSharers.delete(cleanRoomId);
 
         // Remove all sockets from the room
         const roomSockets = await io.in(cleanRoomId).fetchSockets();
