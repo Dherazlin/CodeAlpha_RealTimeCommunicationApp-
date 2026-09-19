@@ -57,11 +57,16 @@ const corsOptions = {
     }
     // Normalize the incoming origin the same way
     const normalizedOrigin = origin.trim().replace(/\/+$/, '');
-    if (normalizedOrigin === allowedOrigin || normalizedOrigin.startsWith('http://localhost')) {
+    if (
+      normalizedOrigin === allowedOrigin || 
+      normalizedOrigin.startsWith('http://localhost') ||
+      /^https:\/\/.*\.vercel\.app$/.test(normalizedOrigin)
+    ) {
       return callback(null, true);
     }
     console.warn(`[CORS] Blocked origin: "${origin}" (allowed: "${allowedOrigin}")`);
-    return callback(new Error(`CORS blocked origin: ${origin}`));
+    // Return false instead of an Error to avoid Express returning HTTP 500
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
