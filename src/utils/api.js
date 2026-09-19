@@ -120,5 +120,26 @@ export const meetingApi = {
     apiRequest(`/meetings/${encodeURIComponent(roomId)}/end`, {
       method: 'POST',
     }),
+
+  // File Sharing API methods
+  getFiles: (roomId) =>
+    apiRequest(`/meetings/${encodeURIComponent(roomId)}/files`, {
+      method: 'GET',
+    }),
+
+  uploadFile: (roomId, fileFormData) =>
+    apiRequest(`/meetings/${encodeURIComponent(roomId)}/files`, {
+      method: 'POST',
+      body: fileFormData,
+    }),
+
+  getDownloadUrl: (roomId, fileId) => {
+    const token = localStorage.getItem('korus_auth_token');
+    return `${API_BASE_URL}/meetings/${encodeURIComponent(roomId)}/files/${encodeURIComponent(fileId)}/download?token=${token}`;
+  },
 };
 
+export default {
+  auth: authApi,
+  meeting: meetingApi,
+};
