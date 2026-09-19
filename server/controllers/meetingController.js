@@ -34,8 +34,14 @@ export const createMeeting = async (req, res) => {
 
     let roomId = customRoomId ? customRoomId.trim().toUpperCase() : await generateUniqueRoomId();
 
-    // Check if customRoomId is already taken
+    // Validate customRoomId format if provided: alphanumeric + dashes only, max 20 chars
     if (customRoomId) {
+      if (!/^[A-Z0-9-]{1,20}$/.test(roomId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Custom Room ID must be 1–20 characters, letters, numbers, or dashes only.',
+        });
+      }
       const existing = await Meeting.findOne({ roomId });
       if (existing) {
         return res.status(400).json({
@@ -75,7 +81,7 @@ export const createMeeting = async (req, res) => {
     console.error('[Meeting Controller] createMeeting error:', error);
     return res.status(500).json({
       success: false,
-      message: error.message || 'Failed to create meeting',
+      message: 'Failed to create meeting. Please try again.',
     });
   }
 };

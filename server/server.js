@@ -1,6 +1,8 @@
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { Server } from 'socket.io';
 import connectDB from './config/db.js';
@@ -11,13 +13,36 @@ import { setupSocketHandlers } from './socket/socketHandler.js';
 // Load environment variables
 dotenv.config();
 
+// Production guard: abort startup if required secrets are missing.
+// This prevents the server from silently running with the fallback JWT secret.
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.error('[Server] FATAL: JWT_SECRET environment variable is not set. Aborting server startup.');
+  process.exit(1);
+}
+
 // Connect to MongoDB
 connectDB();
 
 const app = express();
 
+// Security headers — applied before CORS so they are always present.
+// contentSecurityPolicy is disabled because WebRTC / Socket.io require
+// broad connection permissions that CSP would otherwise block.
+app.use(helmet({ contentSecurityPolicy: false }));
+
 // Create HTTP server for Express and Socket.io
 const server = http.createServer(app);
+
+// Auth-specific rate limiter: 20 requests per 15 minutes per IP.
+// Protects /api/auth/login and /api/auth/register from brute-force.
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, please try again later.' },
+  skipSuccessfulRequests: false,
+});
 
 // CORS Configuration
 // Normalize the allowed origin: trim whitespace and remove any trailing slash
@@ -65,7 +90,8 @@ app.get('/api/health', (req, res) => {
 });
 
 // API Routes
-app.use('/api/auth', authRoutes);
+// Auth routes get the brute-force rate limiter applied at the router level
+app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/meetings', meetingRoutes);
 
 // 404 Route Handler
