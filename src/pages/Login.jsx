@@ -43,20 +43,20 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6 selection:bg-brand-500 selection:text-white">
-      <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200/90 shadow-card p-6 sm:p-8">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4 sm:p-6 selection:bg-brand-500 selection:text-white transition-colors duration-300">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-card dark:shadow-2xl p-6 sm:p-8 transition-colors duration-300">
         {/* Logo & Header */}
         <div className="text-center mb-6">
           <Link to="/" className="inline-flex items-center gap-2 mb-3">
             <div className="w-10 h-10 rounded-2xl bg-brand-600 text-white flex items-center justify-center shadow-sm">
               <Video className="w-5 h-5" />
             </div>
-            <span className="font-bold text-xl text-slate-900 tracking-tight">Korus</span>
+            <span className="font-bold text-xl text-slate-900 dark:text-white tracking-tight">Korus</span>
           </Link>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
             Welcome back
           </h1>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Sign in to access your meetings and conversations
           </p>
         </div>
@@ -64,7 +64,7 @@ export default function Login() {
         {/* Error Banner */}
         {error && (
           <div
-            className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-150"
+            className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200/80 dark:border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs flex items-start gap-2.5 animate-in fade-in duration-150"
             role="alert"
           >
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -116,12 +116,12 @@ export default function Login() {
 
           {/* Remember Me & Forgot Password */}
           <div className="flex items-center justify-between text-xs pt-1">
-            <label className="flex items-center gap-2 text-slate-600 cursor-pointer select-none">
+            <label className="flex items-center gap-2 text-slate-600 dark:text-slate-400 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-brand-600 focus:ring-brand-500 bg-white dark:bg-slate-800"
               />
               <span>Remember me</span>
             </label>
@@ -129,7 +129,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => alert('Password reset will be available in future releases.')}
-              className="text-brand-600 hover:text-brand-700 font-medium transition-colors"
+              className="text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 font-medium transition-colors"
             >
               Forgot password?
             </button>
@@ -149,9 +149,9 @@ export default function Login() {
         </form>
 
         {/* Link to Register */}
-        <div className="text-center mt-6 pt-5 border-t border-slate-100 text-xs text-slate-600">
+        <div className="text-center mt-6 pt-5 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">
           Don&apos;t have an account?{' '}
-          <Link to="/register" className="font-semibold text-brand-600 hover:text-brand-700">
+          <Link to="/register" className="font-semibold text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300">
             Create an account
           </Link>
         </div>

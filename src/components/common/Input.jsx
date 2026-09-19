@@ -42,7 +42,7 @@ const Input = forwardRef(function Input(
           required={required}
           aria-invalid={!!error}
           aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined}
-          className={`w-full rounded-xl border bg-white dark:bg-[#181A22] px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 disabled:bg-slate-50 disabled:text-slate-500 ${
+          className={`w-full rounded-xl border bg-white hover:bg-slate-50 dark:bg-[#181A22] dark:hover:bg-[#1c1f28] px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 focus:bg-white dark:focus:bg-[#181A22] disabled:bg-slate-50 disabled:text-slate-500 ${
             Icon ? 'pl-10' : ''
           } ${endAdornment ? 'pr-11' : ''} ${
             error
