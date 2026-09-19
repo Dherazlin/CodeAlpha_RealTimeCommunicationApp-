@@ -68,12 +68,10 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
-// Apply CORS globally
+// Apply CORS globally — cors() intercepts OPTIONS preflight requests directly
+// and responds with 204 before any route or middleware runs. No separate
+// app.options() handler is needed when using the app.use() form.
 app.use(cors(corsOptions));
-
-// Explicitly handle OPTIONS preflight for ALL routes BEFORE any route handlers
-// so the 404 catch-all never intercepts an OPTIONS request.
-app.options('*', cors(corsOptions));
 
 // Body parser
 app.use(express.json());
